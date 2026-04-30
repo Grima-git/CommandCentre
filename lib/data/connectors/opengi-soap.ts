@@ -1,0 +1,259 @@
+// OpenGI InfoService SOAP connector.
+//
+// Wraps the XML-in-SOAP-body pattern that OpenGI's ExecuteQuery endpoint uses.
+// Each public function calls a specific stored procedure and returns typed rows.
+// Returns null on any failure so callers can fall back to mock data.
+import { assertAllowedUrl } from "@/lib/security";
+
+const SOAP_URL =
+  process.env.OPENGI_SOAP_URL ??
+  "https://infoservice-myfi001.opengihosting.com:10261/InfoService/InfoService";
+const SAFE_SOAP_URL = assertAllowedUrl(SOAP_URL, ["infoservice-myfi001.opengihosting.com"]);
+
+export function isOpenGiConfigured(): boolean {
+  return !!process.env.OPENGI_SOAP_URL;
+}
+
+// ---------- SOAP plumbing ----------
+
+function escapeXmlAttr(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+async function callSoap(storedProc: string, params: string[]): Promise<string | null> {
+  const placeholders = params.map(() => "?").join(",");
+  const execute = `{call ${storedProc}(${placeholders})}`;
+  const paramXml = params
+    .map((p) => `&lt;Parameter value="${escapeXmlAttr(p)}"&gt;&lt;/Parameter&gt;`)
+    .join("\n");
+
+  const soap = `<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <soap:Body>
+    <ExecuteQuery xmlns="www.opengi.co.uk">
+      <inputXML xmlns="">&lt;Query&gt;&lt;Datasource&gt;defaultDB&lt;/Datasource&gt;&lt;Execute&gt;${execute}&lt;/Execute&gt;&lt;ParameterList&gt;${paramXml}&lt;/ParameterList&gt;&lt;/Query&gt;</inputXML>
+    </ExecuteQuery>
+  </soap:Body>
+</soap:Envelope>`;
+
+  try {
+    const res = await fetch(SAFE_SOAP_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/xml; charset=utf-8" },
+      body: soap,
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    return res.text();
+  } catch {
+    return null;
+  }
+}
+
+function extractInnerXml(soapXml: string): string | null {
+  const m = soapXml.match(/<return>([\s\S]*?)<\/return>/);
+  if (!m) return null;
+  // The content is HTML-entity-encoded XML — decode it
+  return m[1]
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'");
+}
+
+// ---------- Date helpers ----------
+
+export function formatDDMMYYYY(d: Date): string {
+  return [
+    String(d.getDate()).padStart(2, "0"),
+    String(d.getMonth() + 1).padStart(2, "0"),
+    d.getFullYear(),
+  ].join("/");
+}
+
+export function parseDDMMYYYY(s: string): Date {
+  const [dd, mm, yyyy] = s.split("/");
+  return new Date(Number(yyyy), Number(mm) - 1, Number(dd));
+}
+
+export function shortLabel(ddmmyyyy: string): string {
+  const d = parseDDMMYYYY(ddmmyyyy);
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+}
+
+// ---------- Renewals Tracker ----------
+
+export type RenewalRow = {
+  date: string;           // DD/MM/YYYY - date renewal was processed
+  processedDate: string;  // DD/MM/YYYY - explicit alias for processed date
+  policyRef: string;
+  clientName: string;
+  totalPremium: number;
+  financeFees: number;
+  deposit: number;
+  fees: number;
+  commission: number;
+  earn: number;
+  advisor: string;
+  legalSold: string;      // "" | "Free" | "Yes"
+  breakdownSold: string;  // "" | "Yes"
+  insurer: string;
+  financed: boolean;
+  inceptionDate: string;  // DD/MM/YYYY
+  daysInAdv: number;
+  pctDeposit: number;
+};
+
+export type RenewalDueRow = {
+  policyRef: string;
+  clientName: string;
+  phone: string;
+  insurer: string;
+  renewalDate: string;
+  product: string;
+};
+
+function parseRenewalRows(soapXml: string): RenewalRow[] {
+  const inner = extractInnerXml(soapXml);
+  if (!inner) return [];
+
+  const rowMatches = inner.matchAll(/<Row>([\s\S]*?)<\/Row>/g);
+  const rows: RenewalRow[] = [];
+
+  for (const [, rowXml] of rowMatches) {
+    const cols: Record<string, string> = {};
+    for (const [, id, val] of rowXml.matchAll(/<Col id="(\d+)" value="([^"]*)"\s*\/>/g)) {
+      cols[id] = val.trim();
+    }
+    rows.push({
+      date: cols["1"] ?? "",
+      processedDate: cols["1"] ?? "",
+      policyRef: cols["2"] ?? "",
+      clientName: cols["3"] ?? "",
+      totalPremium: parseFloat(cols["4"]) || 0,
+      financeFees: parseFloat(cols["5"]) || 0,
+      deposit: parseFloat(cols["6"]) || 0,
+      fees: parseFloat(cols["7"]) || 0,
+      commission: parseFloat(cols["8"]) || 0,
+      earn: parseFloat(cols["9"]) || 0,
+      advisor: cols["10"] ?? "",
+      legalSold: cols["11"] ?? "",
+      breakdownSold: cols["12"] ?? "",
+      insurer: (cols["13"] ?? "").trim(),
+      financed: cols["14"] === "Yes",
+      inceptionDate: cols["15"] ?? "",
+      daysInAdv: parseInt(cols["16"]) || 0,
+      pctDeposit: parseFloat(cols["17"]) || 0,
+    });
+  }
+
+  return rows;
+}
+
+export async function fetchRenewalsTracker(
+  start: Date,
+  end: Date
+): Promise<RenewalRow[] | null> {
+  const xml = await callSoap("[usp_Report_Renewals_Tracker]", [
+    formatDDMMYYYY(start),
+    formatDDMMYYYY(end),
+  ]);
+  if (!xml) return null;
+  return parseRenewalRows(xml);
+}
+
+function formatDueRenewalDate(raw: string): string {
+  const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!match) return raw;
+  return `${match[3]}/${match[2]}/${match[1]}`;
+}
+
+function parseRenewalDueRows(soapXml: string): RenewalDueRow[] {
+  const inner = extractInnerXml(soapXml);
+  if (!inner) return [];
+
+  const rowMatches = inner.matchAll(/<Row>([\s\S]*?)<\/Row>/g);
+  const rows: RenewalDueRow[] = [];
+
+  for (const [, rowXml] of rowMatches) {
+    const cols: Record<string, string> = {};
+    for (const [, id, val] of rowXml.matchAll(/<Col id="(\d+)" value="([^"]*)"\s*\/>/g)) {
+      cols[id] = val.trim();
+    }
+    rows.push({
+      policyRef: cols["1"] ?? "",
+      clientName: cols["2"] ?? "",
+      phone: cols["3"] ?? "",
+      insurer: (cols["4"] ?? "").trim(),
+      renewalDate: formatDueRenewalDate(cols["5"] ?? ""),
+      product: cols["7"] ?? "",
+    });
+  }
+
+  return rows;
+}
+
+export async function fetchRenewalsDue(
+  start: Date,
+  end: Date
+): Promise<RenewalDueRow[] | null> {
+  const xml = await callSoap("[usp_Report_Renewals_Due]", [
+    formatDDMMYYYY(start),
+    formatDDMMYYYY(end),
+  ]);
+  if (!xml) return null;
+  return parseRenewalDueRows(xml);
+}
+
+// React cache() deduplicates identical calls within a single SSR render pass.
+// All dashboard sections share the same two date windows — without this, each
+// section would fire its own pair of SOAP requests.
+import { cache } from "react";
+
+export const cachedRenewalsTracker = cache(
+  async (startStr: string, endStr: string): Promise<RenewalRow[] | null> => {
+    return fetchRenewalsTracker(parseDDMMYYYY(startStr), parseDDMMYYYY(endStr));
+  }
+);
+
+// ---------- Aggregation helpers ----------
+
+export function sumField(rows: RenewalRow[], field: keyof RenewalRow): number {
+  return rows.reduce((acc, r) => acc + (r[field] as number), 0);
+}
+
+export function avgField(rows: RenewalRow[], field: keyof RenewalRow): number {
+  if (!rows.length) return 0;
+  return sumField(rows, field) / rows.length;
+}
+
+export function deltaPct(now: number, prev: number): number {
+  if (!prev) return 0;
+  return ((now - prev) / Math.abs(prev)) * 100;
+}
+
+export function deltaPP(now: number, prev: number): number {
+  return now - prev;
+}
+
+export function groupByDate(
+  rows: RenewalRow[],
+  field: keyof RenewalRow
+): Map<string, number> {
+  const map = new Map<string, number>();
+  for (const r of rows) {
+    map.set(r.date, (map.get(r.date) ?? 0) + (r[field] as number));
+  }
+  return map;
+}
+
+export function sortedDates(map: Map<string, number>): [string, number][] {
+  return [...map.entries()].sort(
+    (a, b) => parseDDMMYYYY(a[0]).getTime() - parseDDMMYYYY(b[0]).getTime()
+  );
+}
