@@ -1,16 +1,19 @@
-import { PlaceholderPage } from "@/components/placeholder-page";
+import { Topbar } from "@/components/topbar";
+import EmailOverview from "@/components/dashboards/email/overview";
 import { auth } from "@/lib/auth";
 import { findExecByEmail, DEV_USER } from "@/lib/users";
 
+export const dynamic = "force-dynamic";
+
 export default async function EmailPage() {
   const session = await auth();
-  const user = findExecByEmail(session?.user?.email) ?? DEV_USER;
+  const exec = findExecByEmail(session?.user?.email) ?? DEV_USER;
   return (
-    <PlaceholderPage
-      title="Email"
-      subtitle="Outlook integration"
-      description="Inbox triage, summaries, and AI-suggested replies. Ready for connection to Microsoft Graph using the same Entra ID login."
-      user={{ name: user.name }}
-    />
+    <div className="flex flex-col h-full">
+      <Topbar title="Email" subtitle="Outlook inbox" user={{ name: exec.name }} />
+      <div className="flex-1 min-h-0 overflow-y-auto p-6">
+        <EmailOverview userName={exec.name} />
+      </div>
+    </div>
   );
 }

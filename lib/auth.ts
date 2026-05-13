@@ -15,6 +15,7 @@ declare module "next-auth" {
       appRole: UserRole;
       title: string | null;
       sections: SectionId[];
+      msAccessToken?: string;
     } & DefaultSession["user"];
   }
 }
@@ -82,12 +83,25 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
                 clientId: process.env.AUTH_MICROSOFT_ENTRA_ID_ID,
                 clientSecret: process.env.AUTH_MICROSOFT_ENTRA_ID_SECRET,
                 issuer: process.env.AUTH_MICROSOFT_ENTRA_ID_ISSUER,
+                authorization: {
+                  params: {
+                    scope:
+                      "openid profile email offline_access User.Read Mail.Read Mail.Send Calendars.Read Chat.Read Presence.Read",
+                  },
+                },
               }),
             ]
           : []),
       ],
   callbacks: {
-    async jwt({ token, user }) {
+    async jwt({ token, user, account }) {
+      // On initial Microsoft sign-in, store the Graph access token.
+      if (account?.provider === "microsoft-entra-id") {
+        token.msAccessToken = account.access_token;
+        token.msRefreshToken = account.refresh_token;
+        token.msExpiresAt = account.expires_at; // unix seconds
+      }
+
       if (user?.email) {
         const localUser = findUserByEmail(user.email);
         const exec = findExecByEmail(user.email);
@@ -105,6 +119,46 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           token.name = localUser.name;
         }
       }
+
+      // Refresh Microsoft Graph token if expired.
+      if (
+        token.msRefreshToken &&
+        token.msExpiresAt &&
+        Date.now() > (token.msExpiresAt as number) * 1000 - 60_000
+      ) {
+        try {
+          const tenantId =
+            process.env.AUTH_MICROSOFT_ENTRA_ID_ISSUER?.split("/")[3] ?? "common";
+          const refreshRes = await fetch(
+            `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/x-www-form-urlencoded" },
+              body: new URLSearchParams({
+                client_id: process.env.AUTH_MICROSOFT_ENTRA_ID_ID ?? "",
+                client_secret: process.env.AUTH_MICROSOFT_ENTRA_ID_SECRET ?? "",
+                refresh_token: String(token.msRefreshToken),
+                grant_type: "refresh_token",
+                scope:
+                  "openid profile email offline_access User.Read Mail.Read Mail.Send Calendars.Read Chat.Read Presence.Read",
+              }),
+            },
+          );
+          if (refreshRes.ok) {
+            const refreshed = (await refreshRes.json()) as {
+              access_token: string;
+              expires_in: number;
+              refresh_token?: string;
+            };
+            token.msAccessToken = refreshed.access_token;
+            token.msExpiresAt = Math.floor(Date.now() / 1000) + refreshed.expires_in;
+            if (refreshed.refresh_token) token.msRefreshToken = refreshed.refresh_token;
+          }
+        } catch {
+          // Token refresh failed; user will see "Sign in with Microsoft" prompt.
+        }
+      }
+
       return token;
     },
     async session({ session, token }) {
@@ -112,6 +166,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       session.user.appRole = (token.appRole as UserRole | null) ?? "user";
       session.user.title = (token.title as string | null) ?? null;
       session.user.sections = normalizeSections(token.sections, session.user.appRole);
+      if (token.msAccessToken) {
+        session.user.msAccessToken = token.msAccessToken as string;
+      }
       return session;
     },
   },

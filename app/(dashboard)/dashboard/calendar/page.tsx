@@ -1,16 +1,19 @@
-import { PlaceholderPage } from "@/components/placeholder-page";
+import { Topbar } from "@/components/topbar";
+import CalendarOverview from "@/components/dashboards/calendar/overview";
 import { auth } from "@/lib/auth";
 import { findExecByEmail, DEV_USER } from "@/lib/users";
 
+export const dynamic = "force-dynamic";
+
 export default async function CalendarPage() {
   const session = await auth();
-  const user = findExecByEmail(session?.user?.email) ?? DEV_USER;
+  const exec = findExecByEmail(session?.user?.email) ?? DEV_USER;
   return (
-    <PlaceholderPage
-      title="Calendar"
-      subtitle="Outlook calendar"
-      description="Today's schedule, conflicts, and prep notes for upcoming meetings. Ready for connection to Microsoft Graph."
-      user={{ name: user.name }}
-    />
+    <div className="flex flex-col h-full">
+      <Topbar title="Calendar" subtitle="Outlook calendar" user={{ name: exec.name }} />
+      <div className="flex-1 min-h-0 overflow-y-auto p-6">
+        <CalendarOverview userName={exec.name} />
+      </div>
+    </div>
   );
 }
