@@ -5,10 +5,10 @@
 // Returns null on any failure so callers can fall back to mock data.
 import { assertAllowedUrl } from "@/lib/security";
 
-const SOAP_URL =
-  process.env.OPENGI_SOAP_URL ??
-  "https://infoservice-myfi001.opengihosting.com:10261/InfoService/InfoService";
-const SAFE_SOAP_URL = assertAllowedUrl(SOAP_URL, ["infoservice-myfi001.opengihosting.com"]);
+const SOAP_URL = process.env.OPENGI_SOAP_URL ?? "";
+const SAFE_SOAP_URL = SOAP_URL
+  ? assertAllowedUrl(SOAP_URL, ["infoservice-myfi001.opengihosting.com"])
+  : "";
 
 export function isOpenGiConfigured(): boolean {
   return !!process.env.OPENGI_SOAP_URL;

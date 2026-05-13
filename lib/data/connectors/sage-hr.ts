@@ -53,10 +53,9 @@ type SagePaged<T> = {
   };
 };
 
-const DEFAULT_BASE_URL = "https://myfirst.sage.hr/api";
-
 function baseUrl(): string {
-  return assertAllowedUrl(process.env.SAGE_HR_BASE_URL || DEFAULT_BASE_URL, ["myfirst.sage.hr"]);
+  const url = process.env.SAGE_HR_BASE_URL ?? "";
+  return assertAllowedUrl(url, ["myfirst.sage.hr"]);
 }
 
 export function isSageHrConfigured(): boolean {
