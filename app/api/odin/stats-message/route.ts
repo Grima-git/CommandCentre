@@ -6,7 +6,7 @@ import { requireApiAccess, safeText } from "@/lib/security";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type StatsKind = "renewals" | "calls";
+type StatsKind = "renewals" | "calls" | "combined";
 type StatsPeriod = "today" | "week" | "month" | "ytd";
 
 type StatsMessageBody = {
@@ -70,11 +70,12 @@ async function buildRenewalsMessage(period: StatsPeriod): Promise<string | null>
   const rows = await fetchRenewalsTracker(start, end);
   if (!rows) return null;
 
-  const renewed = rows.length;
+  const renewedRows = rows.filter((row) => row.totalPremium > 0 || row.earn > 0);
+  const renewed = renewedRows.length;
   const gwp = rows.reduce((sum, row) => sum + row.totalPremium, 0);
   const earn = rows.reduce((sum, row) => sum + row.earn, 0);
-  const financePen = renewed ? Math.round((rows.filter((row) => row.financed).length / renewed) * 100) : 0;
-  const legalAttach = renewed ? Math.round((rows.filter((row) => row.legalSold !== "").length / renewed) * 100) : 0;
+  const financePen = renewed ? Math.round((renewedRows.filter((row) => row.financed).length / renewed) * 100) : 0;
+  const legalAttach = renewed ? Math.round((renewedRows.filter((row) => row.legalSold !== "").length / renewed) * 100) : 0;
 
   return `Renewals ${periodLabel(period)}: ${renewed} renewed, GWP ${fmtCurrency(gwp)}, net earn ${fmtCurrency(earn)}, finance pen ${financePen}%, legal ${legalAttach}%.`;
 }
@@ -96,6 +97,15 @@ async function buildCallsMessage(period: StatsPeriod): Promise<string | null> {
   return `Calls ${periodLabel(period)}: ${total} New-Renewals calls, avg wait ${fmtSec(avgWait)}, avg duration ${fmtSec(avgDuration)}, recordings ${recordings}, longest wait ${fmtSec(longestWait)}.`;
 }
 
+async function buildCombinedMessage(period: StatsPeriod): Promise<string | null> {
+  const [renewals, calls] = await Promise.all([
+    buildRenewalsMessage(period),
+    buildCallsMessage(period),
+  ]);
+  if (!renewals || !calls) return renewals ?? calls;
+  return `${renewals} ${calls}`.slice(0, 612);
+}
+
 export async function POST(req: Request) {
   const access = await requireApiAccess(req, { section: "home", limit: { windowMs: 60_000, max: 20 } });
   if (access.response) return access.response;
@@ -114,12 +124,14 @@ export async function POST(req: Request) {
   if (!toName || !findContactByName(toName)) {
     return Response.json({ ok: false, error: "Recipient must be a known contact" }, { status: 400 });
   }
-  if (kind !== "renewals" && kind !== "calls") {
-    return Response.json({ ok: false, error: "Stats type must be renewals or calls" }, { status: 400 });
+  if (kind !== "renewals" && kind !== "calls" && kind !== "combined") {
+    return Response.json({ ok: false, error: "Stats type must be renewals, calls, or combined" }, { status: 400 });
   }
 
   const message = kind === "renewals"
     ? await buildRenewalsMessage(period)
+    : kind === "combined"
+    ? await buildCombinedMessage(period)
     : await buildCallsMessage(period);
 
   if (!message) {

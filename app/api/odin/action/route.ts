@@ -9,6 +9,7 @@ import {
   type SageEmployee,
   type SageLeaveEntry,
 } from "@/lib/data/connectors/sage-hr";
+import { parseOdinCommand, type OdinAnswerKind, type OdinPeriod } from "@/lib/odin/command-engine";
 import { requireApiAccess, safeText } from "@/lib/security";
 
 export const runtime = "nodejs";
@@ -31,6 +32,12 @@ function periodFromText(text: string): "today" | "week" | "month" | "ytd" {
   if (/\b(?:this month|month)\b/i.test(text)) return "month";
   if (/\b(?:this week|week|weekly)\b/i.test(text)) return "week";
   return "today";
+}
+
+function statsKindFromText(text: string): "renewals" | "calls" | null {
+  if (/\b(?:call|calls|phone|phones|pbx)\b/i.test(text)) return "calls";
+  if (/\b(?:renewal|renewals|renewel|renewels|renwal|renwals|renewel|renewls)\b/i.test(text)) return "renewals";
+  return null;
 }
 
 function periodLabel(period: Period): string {
@@ -77,7 +84,13 @@ function fmtSec(seconds: number): string {
 
 function findMentionedContact(text: string): string | null {
   const lower = text.toLowerCase();
-  return getContacts().find((contact) => lower.includes(contact.name.toLowerCase()))?.name ?? null;
+  return getContacts()
+    .sort((a, b) => b.name.length - a.name.length)
+    .find((contact) => new RegExp(`\\b${escapeRegExp(contact.name.toLowerCase())}\\b`, "i").test(lower))?.name ?? null;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function parseStats(text: string) {
@@ -86,13 +99,11 @@ function parseStats(text: string) {
   if (!toName) return null;
 
   const wantsSend = /\b(?:send|text|sms|message)\b/.test(lower);
-  const wantsStats = /\b(?:stat|stats|summary|figures|numbers|performance)\b/.test(lower);
-  const kind =
-    /\b(?:call|calls|phone|pbx)\b/.test(lower) ? "calls" :
-    /\b(?:renewal|renewals)\b/.test(lower) ? "renewals" :
-    null;
+  const wantsStats = /\b(?:stat|stats|summary|figures|numbers|performance|report|update)\b/.test(lower);
+  const kind = statsKindFromText(lower);
 
-  if (!wantsSend || !wantsStats || !kind) return null;
+  if (!wantsSend || !kind) return null;
+  if (!wantsStats && !/\b(?:send|text|sms|message)\b.+\b(?:renewal|renewals|call|calls)\b/i.test(lower)) return null;
   return {
     type: "stats_sms",
     toName,
@@ -256,21 +267,18 @@ async function buildHrAnswer(kind: "hr_off_today" | "hr_pending_leave" | "hr_sum
   return `HR summary: ${employees.length} employees, ${outToday.length} out today, ${pending.length} pending leave requests. Largest teams: ${topTeams}.`;
 }
 
-async function buildAnswer(text: string): Promise<{ type: "answer"; answer: string } | null> {
-  const intent = parseAnswerIntent(text);
-  if (!intent) return null;
-
-  if (intent.kind === "help") {
+async function buildAnswerFromIntent(kind: OdinAnswerKind, period: OdinPeriod): Promise<{ type: "answer"; answer: string }> {
+  if (kind === "help") {
     return {
       type: "answer",
-      answer: "Try: text Thomas hello, send Thomas renewal stats this week, call stats today, who is off today, pending leave, or HR summary.",
+      answer: "Try: text Thomas hello, send Thomas renewal stats this week, send Thomas renewal and call stats this month, call stats today, who is off today, pending leave, or add contact Sarah as 07123456789.",
     };
   }
 
   const answer =
-    intent.kind === "renewals" ? await buildRenewalsAnswer(intent.period) :
-    intent.kind === "calls" ? await buildCallsAnswer(intent.period) :
-    await buildHrAnswer(intent.kind);
+    kind === "renewals" ? await buildRenewalsAnswer(period) :
+    kind === "calls" ? await buildCallsAnswer(period) :
+    await buildHrAnswer(kind);
 
   return { type: "answer", answer: answer ?? "I could not reach that data source just now." };
 }
@@ -289,6 +297,11 @@ export async function POST(req: Request) {
   const text = cleanText(safeText(body.text, 1000));
   if (!text) return Response.json({ ok: true, action: null });
 
-  const action = parseStats(text) ?? parseSimpleSms(text) ?? parseSms(text) ?? parseFollowupSms(text) ?? await buildAnswer(text);
+  const command = parseOdinCommand(text);
+  const action =
+    command?.type === "answer_intent" ? await buildAnswerFromIntent(command.kind, command.period) :
+    command?.type === "clarify" ? { type: "answer", answer: command.options?.length ? `${command.prompt} Options: ${command.options.join(", ")}.` : command.prompt } :
+    command ?? null;
+
   return Response.json({ ok: true, action });
 }

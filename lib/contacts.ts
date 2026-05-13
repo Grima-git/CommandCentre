@@ -4,6 +4,7 @@ import path from "node:path";
 export type Contact = {
   name: string;
   phone: string;
+  aliases?: string[];
 };
 
 const CONTACTS_PATH = path.join(process.cwd(), "data", "contacts.json");
@@ -31,7 +32,13 @@ export function getContacts(): Contact[] {
     if (!Array.isArray(parsed)) return [];
     return parsed
       .filter((contact) => contact.name && contact.phone)
-      .map((contact) => ({ name: contact.name.trim(), phone: normalizePhone(contact.phone) }));
+      .map((contact) => ({
+        name: contact.name.trim(),
+        phone: normalizePhone(contact.phone),
+        aliases: Array.isArray(contact.aliases)
+          ? contact.aliases.map((alias) => String(alias).trim()).filter(Boolean)
+          : undefined,
+      }));
   } catch {
     return [];
   }
@@ -43,7 +50,11 @@ export function findContactByName(name: string): Contact | null {
 }
 
 export function upsertContact(contact: Contact): Contact {
-  const next = { name: contact.name.trim(), phone: normalizePhone(contact.phone) };
+  const next = {
+    name: contact.name.trim(),
+    phone: normalizePhone(contact.phone),
+    aliases: contact.aliases?.map((alias) => alias.trim()).filter(Boolean),
+  };
   const contacts = getContacts();
   const existing = contacts.findIndex((item) => item.name.toLowerCase() === next.name.toLowerCase());
   if (existing >= 0) contacts[existing] = next;

@@ -13,3 +13,5 @@ cookie.txt
 .claude
 data/users.json
 data/contacts.json
+data/piper-voices/
+vendor/piper1-gpl/

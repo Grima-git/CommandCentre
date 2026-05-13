@@ -1,0 +1,32 @@
+[build]
+  command   = "npm run build"
+  publish   = ".next"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+[functions]
+  # Increase timeout to handle external SOAP / PBX / Anthropic API calls.
+  # Default is 10 s; Pro plan allows up to 26 s.
+  node_bundler = "esbuild"
+
+[functions."api/ai-query"]
+  # Streaming SSE — give it the full function budget.
+  timeout = 26
+
+[functions."api/renewals/summary"]
+  timeout = 26
+
+[functions."api/renewals/monthly"]
+  timeout = 26
+
+[functions."api/calls/summary"]
+  timeout = 20
+
+[context.production.environment]
+  # Safety net: never run with the dev auth bypass in production.
+  DEV_AUTH_BYPASS = "0"
+  NODE_ENV        = "production"

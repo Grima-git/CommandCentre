@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Send, Loader2 } from "lucide-react";
+import { Send, Loader2, Mic, MicOff, Volume2, VolumeX } from "lucide-react";
 import { formatCurrency } from "@/lib/utils";
 import type { SummaryResponse } from "@/app/api/renewals/summary/route";
 import type { CallsSummaryResponse } from "@/app/api/calls/summary/route";
@@ -10,7 +10,7 @@ import type { HrSummaryResponse } from "@/app/api/hr/summary/route";
 type OdinState = "idle" | "thinking" | "speaking";
 type PendingSms = { toName?: string; to?: string; message: string };
 type AddContactCommand = { name: string; phone: string };
-type StatsSmsCommand = { toName: string; kind: "renewals" | "calls"; period: "today" | "week" | "month" | "ytd" };
+type StatsSmsCommand = { toName: string; kind: "renewals" | "calls" | "combined"; period: "today" | "week" | "month" | "ytd" };
 type QuickAnswerIntent = {
   kind: "hr_off_today" | "hr_pending_leave" | "hr_summary" | "renewals" | "calls";
   period: "today" | "week" | "month" | "ytd";
@@ -19,7 +19,30 @@ type OdinAction =
   | ({ type: "sms" } & PendingSms)
   | ({ type: "stats_sms" } & StatsSmsCommand)
   | { type: "followup_sms"; toName: string }
+  | ({ type: "add_contact" } & AddContactCommand)
   | { type: "answer"; answer: string };
+
+type SpeechRecognitionResultListLike = {
+  length: number;
+  item(index: number): {
+    isFinal: boolean;
+    item(index: number): { transcript: string };
+  };
+};
+type SpeechRecognitionEventLike = { results: SpeechRecognitionResultListLike };
+type SpeechRecognitionLike = {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  start: () => void;
+  stop: () => void;
+  abort: () => void;
+  onstart: (() => void) | null;
+  onend: (() => void) | null;
+  onerror: ((event: { error?: string }) => void) | null;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+};
+type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
 
 const STARTERS = [
   "How are renewals performing today?",
@@ -327,13 +350,94 @@ export function OdinInterface({ userName }: { userName: string }) {
   const [stats, setStats] = useState<SummaryResponse | null>(null);
   const [showStarters, setShowStarters] = useState(true);
   const [pendingSms, setPendingSms] = useState<PendingSms | null>(null);
+  const [listening, setListening] = useState(false);
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
+  const [speechSupported, setSpeechSupported] = useState(false);
+  const [voiceName, setVoiceName] = useState("");
+  const [voiceEngine, setVoiceEngine] = useState("Piper ready");
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stateRef = useRef<OdinState>("idle");
   const inputRef = useRef<HTMLInputElement>(null);
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const voiceRef = useRef<SpeechSynthesisVoice | null>(null);
+  const lastSpokenRef = useRef("");
+  const spokenPrefixRef = useRef("");
+  const speechQueueRef = useRef<string[]>([]);
+  const speakingRef = useRef(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioUnlockedRef = useRef(false);
+  const piperFailedRef = useRef(false);
 
   useEffect(() => { stateRef.current = odinState; }, [odinState]);
   useNeuralCanvas(canvasRef, stateRef);
+
+  useEffect(() => {
+    const win = window as typeof window & {
+      SpeechRecognition?: SpeechRecognitionConstructor;
+      webkitSpeechRecognition?: SpeechRecognitionConstructor;
+    };
+    const Recognition = win.SpeechRecognition ?? win.webkitSpeechRecognition;
+    setSpeechSupported(Boolean(Recognition && window.speechSynthesis));
+    if (!Recognition) return;
+
+    const recognition = new Recognition();
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.lang = "en-GB";
+    recognition.onstart = () => setListening(true);
+    recognition.onend = () => setListening(false);
+    recognition.onerror = () => setListening(false);
+    recognition.onresult = (event) => {
+      let interim = "";
+      let finalTranscript = "";
+      for (let i = 0; i < event.results.length; i += 1) {
+        const result = event.results.item(i);
+        const transcript = result.item(0).transcript.trim();
+        if (result.isFinal) finalTranscript += `${transcript} `;
+        else interim += transcript;
+      }
+      const spokenText = (finalTranscript || interim).trim();
+      if (spokenText) setInput(spokenText);
+      if (finalTranscript.trim()) {
+        void send(finalTranscript.trim());
+      }
+    };
+    recognitionRef.current = recognition;
+    return () => {
+      recognition.abort();
+      recognitionRef.current = null;
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!window.speechSynthesis) return;
+    const loadVoices = () => {
+      const selected = window.speechSynthesis.getVoices()
+        .map((voice) => {
+          const name = voice.name.toLowerCase();
+          const lang = voice.lang.toLowerCase();
+          let score = 0;
+          if (lang === "en-gb") score += 40;
+          if (lang.startsWith("en-")) score += 15;
+          if (name.includes("natural")) score += 35;
+          if (name.includes("neural")) score += 30;
+          if (name.includes("online")) score += 20;
+          if (/\b(ryan|george|thomas|david|mark|guy)\b/.test(name)) score += 30;
+          if (/\b(libby|sonia|zira|hazel|susan)\b/.test(name)) score += 8;
+          if (name.includes("microsoft")) score += 8;
+          if (voice.localService) score += 3;
+          return { voice, score };
+        })
+        .sort((a, b) => b.score - a.score)[0]?.voice ?? null;
+      voiceRef.current = selected;
+      setVoiceName(selected?.name ?? "");
+    };
+    loadVoices();
+    window.speechSynthesis.addEventListener("voiceschanged", loadVoices);
+    return () => window.speechSynthesis.removeEventListener("voiceschanged", loadVoices);
+  }, []);
 
   useEffect(() => {
     fetch("/api/renewals/summary?period=today")
@@ -342,21 +446,104 @@ export function OdinInterface({ userName }: { userName: string }) {
       .catch(() => {});
   }, []);
 
+  useEffect(() => {
+    return;
+    if (!voiceEnabled || streaming || !response || pendingSms || spokenPrefixRef.current) return;
+    if (!window.speechSynthesis || lastSpokenRef.current === response) return;
+    lastSpokenRef.current = response;
+    let cancelled = false;
+    window.speechSynthesis.cancel();
+    const spoken = response
+      .replace(/["]/g, "")
+      .replace(/\u00A3\s?([\d,]+(?:\.\d{1,2})?)/g, "$1 pounds")
+      .replace(/£\s?([\d,]+(?:\.\d{1,2})?)/g, "$1 pounds")
+      .replace(/\b(\d+(?:\.\d+)?)%/g, "$1 percent")
+      .replace(/\bGWP\b/g, "G W P")
+      .replace(/\bYTD\b/g, "year to date")
+      .replace(/\bavg\b/gi, "average")
+      .replace(/\bSMS\b/g, "text message")
+      .replace(/\bOD1N\b/g, "Odin")
+      .replace(/\bNew-Renewals\b/g, "New Renewals")
+      .replace(/:\s+/g, ". ")
+      .replace(/;\s+/g, ". ")
+      .replace(/\s+/g, " ")
+      .trim();
+    const chunks = spoken.split(/(?<=[.!?])\s+/).filter(Boolean);
+    const speakChunk = (index: number) => {
+      if (cancelled || index >= chunks.length) {
+        if (!cancelled) setOdinState("idle");
+        return;
+      }
+      const utterance = new SpeechSynthesisUtterance(chunks[index]);
+      const voice = voiceRef.current;
+      if (voice) utterance.voice = voice;
+      utterance.lang = voice?.lang || "en-GB";
+      utterance.rate = chunks[index].length > 120 ? 1.0 : 1.04;
+      utterance.pitch = 0.72;
+      utterance.volume = 0.95;
+      utterance.onend = () => window.setTimeout(() => speakChunk(index + 1), index === 0 ? 90 : 140);
+      utterance.onerror = () => setOdinState("idle");
+      setOdinState("speaking");
+      window.speechSynthesis.speak(utterance);
+    };
+    speakChunk(0);
+    return () => {
+      cancelled = true;
+      window.speechSynthesis.cancel();
+    };
+    window.speechSynthesis.cancel();
+    const utterance = new SpeechSynthesisUtterance(response.replace(/["£]/g, (match) => match === "£" ? "pounds " : ""));
+    utterance.lang = "en-GB";
+    utterance.rate = 0.96;
+    utterance.pitch = 0.92;
+    window.speechSynthesis.speak(utterance);
+    setOdinState("speaking");
+    utterance.onend = () => setOdinState("idle");
+    utterance.onerror = () => setOdinState("idle");
+  }, [pendingSms, response, streaming, voiceEnabled]);
+
+  useEffect(() => {
+    if (!window.speechSynthesis) return;
+    if (!voiceEnabled || pendingSms || !response) {
+      spokenPrefixRef.current = "";
+      speechQueueRef.current = [];
+      speakingRef.current = false;
+      audioRef.current?.pause();
+      window.speechSynthesis.cancel();
+      return;
+    }
+
+    const spoken = toSpokenText(response);
+    const speakable = streaming ? completeSentencePrefix(spoken) : spoken;
+    if (speakable.length <= spokenPrefixRef.current.length) return;
+
+    const nextText = speakable.slice(spokenPrefixRef.current.length).trim();
+    spokenPrefixRef.current = speakable;
+    speechQueueRef.current.push(...splitSpeechIntoChunks(nextText));
+    speakQueuedSpeech();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingSms, response, streaming, voiceEnabled]);
+
   async function send(text: string) {
     if (!text.trim() || streaming) return;
+    void unlockAudioPlayback();
+    spokenPrefixRef.current = "";
+    speechQueueRef.current = [];
+    speakingRef.current = false;
+    piperFailedRef.current = false;
+    audioRef.current?.pause();
+    if (window.speechSynthesis) window.speechSynthesis.cancel();
     const addContact = parseAddContactCommand(text);
     if (addContact) {
       await saveContact(addContact);
       return;
     }
 
-    const quickAnswer = parseQuickAnswerIntent(text);
-    if (quickAnswer) {
-      await answerQuickly(quickAnswer);
+    const parsedAction = await parseServerAction(text);
+    if (parsedAction?.type === "add_contact") {
+      await saveContact({ name: parsedAction.name, phone: parsedAction.phone });
       return;
     }
-
-    const parsedAction = await parseServerAction(text);
     if (parsedAction?.type === "answer") {
       setInput("");
       setShowStarters(false);
@@ -367,23 +554,17 @@ export function OdinInterface({ userName }: { userName: string }) {
       return;
     }
     if (parsedAction?.type === "sms") {
-      setInput("");
-      setShowStarters(false);
       const smsDraft = { toName: parsedAction.toName, to: parsedAction.to, message: parsedAction.message };
-      setPendingSms(smsDraft);
-      setResponse(`Ready to text ${smsDraft.toName ?? smsDraft.to}: "${smsDraft.message}"`);
+      await sendSmsNow(smsDraft);
       return;
     }
     if (parsedAction?.type === "followup_sms") {
-      setInput("");
-      setShowStarters(false);
       const message = response.trim();
       if (!message || pendingSms) {
         setResponse("Give me the message to send, or ask for stats first.");
         return;
       }
-      setPendingSms({ toName: parsedAction.toName, message });
-      setResponse(`Ready to text ${parsedAction.toName}: "${message}"`);
+      await sendSmsNow({ toName: parsedAction.toName, message });
       return;
     }
 
@@ -393,12 +574,15 @@ export function OdinInterface({ userName }: { userName: string }) {
       return;
     }
 
+    const quickAnswer = parseQuickAnswerIntent(text);
+    if (quickAnswer) {
+      await answerQuickly(quickAnswer);
+      return;
+    }
+
     const sms = parseSmsCommand(text);
     if (sms) {
-      setInput("");
-      setShowStarters(false);
-      setPendingSms(sms);
-      setResponse(`Ready to text ${sms.toName ?? sms.to}: "${sms.message}"`);
+      await sendSmsNow(sms);
       return;
     }
     setInput(""); setShowStarters(false); setStreaming(true); setOdinState("thinking"); setResponse("");
@@ -497,6 +681,7 @@ export function OdinInterface({ userName }: { userName: string }) {
     setShowStarters(false);
     setStreaming(true);
     setOdinState("thinking");
+    setPendingSms(null);
     setResponse(`Preparing ${command.kind} stats for ${command.toName}...`);
     try {
       const res = await fetch("/api/odin/stats-message", {
@@ -508,8 +693,38 @@ export function OdinInterface({ userName }: { userName: string }) {
       if (!res.ok || !json.ok || !json.message || !json.toName) {
         throw new Error(json.error ?? "Could not prepare stats text");
       }
-      setPendingSms({ toName: json.toName, message: json.message });
-      setResponse(`Ready to text ${json.toName}: "${json.message}"`);
+      setResponse(`Sending ${command.kind} stats to ${json.toName}: "${json.message}"`);
+      await postSms({ toName: json.toName, message: json.message });
+      setResponse(`Text sent to ${json.toName}.`);
+    } catch (e) {
+      setResponse((e as Error).message);
+    } finally {
+      setStreaming(false);
+      setOdinState("idle");
+      inputRef.current?.focus();
+    }
+  }
+
+  async function postSms(sms: PendingSms) {
+    const res = await fetch("/api/sms/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(sms),
+    });
+    const json = (await res.json()) as { ok?: boolean; error?: string };
+    if (!res.ok || !json.ok) throw new Error(json.error ?? "SMS failed");
+  }
+
+  async function sendSmsNow(sms: PendingSms) {
+    setInput("");
+    setShowStarters(false);
+    setPendingSms(null);
+    setStreaming(true);
+    setOdinState("thinking");
+    setResponse(`Sending text to ${sms.toName ?? sms.to}...`);
+    try {
+      await postSms(sms);
+      setResponse(`Text sent to ${sms.toName ?? sms.to}.`);
     } catch (e) {
       setResponse((e as Error).message);
     } finally {
@@ -525,13 +740,7 @@ export function OdinInterface({ userName }: { userName: string }) {
     setOdinState("thinking");
     setResponse(`Sending text to ${pendingSms.toName ?? pendingSms.to}...`);
     try {
-      const res = await fetch("/api/sms/send", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(pendingSms),
-      });
-      const json = (await res.json()) as { ok?: boolean; error?: string };
-      if (!res.ok || !json.ok) throw new Error(json.error ?? "SMS failed");
+      await postSms(pendingSms);
       setResponse(`Text sent to ${pendingSms.toName ?? pendingSms.to}.`);
       setPendingSms(null);
     } catch (e) {
@@ -547,6 +756,119 @@ export function OdinInterface({ userName }: { userName: string }) {
     setPendingSms(null);
     setResponse("Text cancelled.");
     inputRef.current?.focus();
+  }
+
+  async function unlockAudioPlayback() {
+    if (audioUnlockedRef.current) return;
+    try {
+      const audio = new Audio("data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQQAAAAAAA==");
+      audio.volume = 0;
+      await audio.play();
+      audio.pause();
+      audioUnlockedRef.current = true;
+    } catch {
+      audioUnlockedRef.current = false;
+    }
+  }
+
+  async function playPiperSpeech(text: string): Promise<boolean> {
+    if (piperFailedRef.current) return false;
+    try {
+      setVoiceEngine("Piper");
+      const res = await fetch("/api/tts/piper", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      if (!res.ok) throw new Error("Piper unavailable");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audioRef.current = audio;
+      setOdinState("speaking");
+      await new Promise<void>((resolve, reject) => {
+        audio.onended = () => resolve();
+        audio.onerror = () => reject(new Error("Audio playback failed"));
+        void audio.play().catch(reject);
+      });
+      URL.revokeObjectURL(url);
+      return true;
+    } catch {
+      piperFailedRef.current = true;
+      setVoiceEngine("Browser fallback");
+      return false;
+    }
+  }
+
+  function speakWithBrowserVoice(text: string) {
+    setVoiceEngine("Browser fallback");
+    if (!window.speechSynthesis) {
+      speakingRef.current = false;
+      return;
+    }
+    const utterance = new SpeechSynthesisUtterance(text);
+    const voice = voiceRef.current;
+    if (voice) utterance.voice = voice;
+    utterance.lang = voice?.lang || "en-GB";
+    utterance.rate = text.length > 120 ? 1.0 : 1.05;
+    utterance.pitch = 0.7;
+    utterance.volume = 0.96;
+    utterance.onstart = () => setOdinState("speaking");
+    utterance.onend = () => {
+      speakingRef.current = false;
+      window.setTimeout(speakQueuedSpeech, humanPauseMs(text));
+    };
+    utterance.onerror = () => {
+      speakingRef.current = false;
+      setOdinState("idle");
+    };
+    window.speechSynthesis.speak(utterance);
+  }
+
+  function speakQueuedSpeech() {
+    if (speakingRef.current) return;
+    const next = speechQueueRef.current.shift();
+    if (!next) {
+      speakingRef.current = false;
+      if (!streaming) setOdinState("idle");
+      return;
+    }
+
+    speakingRef.current = true;
+    void playPiperSpeech(next).then((played) => {
+      if (played) {
+        speakingRef.current = false;
+        window.setTimeout(speakQueuedSpeech, humanPauseMs(next));
+        return;
+      }
+      speakWithBrowserVoice(next);
+    });
+  }
+
+  function toggleListening() {
+    const recognition = recognitionRef.current;
+    if (!recognition || streaming) return;
+    if (listening) {
+      recognition.stop();
+      return;
+    }
+    setResponse("");
+    setPendingSms(null);
+    try {
+      recognition.start();
+    } catch {
+      setListening(false);
+    }
+  }
+
+  function toggleVoice() {
+    const next = !voiceEnabled;
+    setVoiceEnabled(next);
+    if (next) void unlockAudioPlayback();
+    if (!next && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+      setOdinState("idle");
+    }
   }
 
   const isActive = odinState !== "idle";
@@ -651,6 +973,35 @@ export function OdinInterface({ userName }: { userName: string }) {
             style={{ color: "rgba(226,244,255,0.9)", caretColor: "#73f7ff" }}
           />
           <button
+            type="button"
+            onClick={toggleVoice}
+            title={voiceEnabled ? `Mute OD1N voice${voiceName ? ` (${voiceName})` : ""}` : "Enable OD1N voice"}
+            className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center transition-all"
+            style={{
+              background: voiceEnabled ? "rgba(52,211,153,0.12)" : "rgba(255,255,255,0.04)",
+              border: `1px solid ${voiceEnabled ? "rgba(52,211,153,0.28)" : "rgba(115,247,255,0.14)"}`,
+            }}
+          >
+            {voiceEnabled
+              ? <Volume2 className="w-3.5 h-3.5" style={{ color: "#34d399" }} />
+              : <VolumeX className="w-3.5 h-3.5" style={{ color: "rgba(226,244,255,0.5)" }} />}
+          </button>
+          <button
+            type="button"
+            onClick={toggleListening}
+            disabled={!speechSupported || streaming}
+            title={speechSupported ? (listening ? "Stop listening" : "Speak to OD1N") : "Speech recognition is not available in this browser"}
+            className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center transition-all disabled:opacity-30"
+            style={{
+              background: listening ? "rgba(251,191,36,0.16)" : "rgba(115,247,255,0.08)",
+              border: `1px solid ${listening ? "rgba(251,191,36,0.42)" : "rgba(115,247,255,0.22)"}`,
+            }}
+          >
+            {listening
+              ? <MicOff className="w-3.5 h-3.5" style={{ color: "#fbbf24" }} />
+              : <Mic className="w-3.5 h-3.5" style={{ color: speechSupported ? "#73f7ff" : "rgba(226,244,255,0.35)" }} />}
+          </button>
+          <button
             type="submit"
             disabled={!input.trim() || streaming}
             className="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center transition-all disabled:opacity-30"
@@ -662,11 +1013,121 @@ export function OdinInterface({ userName }: { userName: string }) {
           </button>
         </form>
         <p className="text-center text-[9px] mt-2 tracking-[0.4em] font-mono" style={{ color: "rgba(115,247,255,0.18)" }}>
-          ODIN INTELLIGENCE NETWORK · COMMAND CENTRE v1
+          ODIN INTELLIGENCE NETWORK · COMMAND CENTRE v1 · {voiceEngine}
         </p>
       </div>
     </div>
   );
+}
+
+function speakOdinResponse(
+  response: string,
+  voice: SpeechSynthesisVoice | null,
+  setOdinState: (state: OdinState) => void,
+) {
+  let cancelled = false;
+  window.speechSynthesis.cancel();
+  const chunks = splitSpeechIntoChunks(toSpokenText(response));
+
+  const speakChunk = (index: number) => {
+    if (cancelled || index >= chunks.length) {
+      if (!cancelled) setOdinState("idle");
+      return;
+    }
+
+    const utterance = new SpeechSynthesisUtterance(chunks[index]);
+    if (voice) utterance.voice = voice;
+    utterance.lang = voice?.lang || "en-GB";
+    utterance.rate = chunks[index].length > 120 ? 0.94 : 0.98;
+    utterance.pitch = 0.88;
+    utterance.volume = 0.95;
+    utterance.onend = () => window.setTimeout(() => speakChunk(index + 1), index === 0 ? 90 : 140);
+    utterance.onerror = () => setOdinState("idle");
+    setOdinState("speaking");
+    window.speechSynthesis.speak(utterance);
+  };
+
+  speakChunk(0);
+
+  return () => {
+    cancelled = true;
+    window.speechSynthesis.cancel();
+  };
+}
+
+function chooseOdinVoice(voices: SpeechSynthesisVoice[]): SpeechSynthesisVoice | null {
+  if (voices.length === 0) return null;
+  const scored = voices.map((voice) => {
+    const name = voice.name.toLowerCase();
+    const lang = voice.lang.toLowerCase();
+    let score = 0;
+    if (lang === "en-gb") score += 40;
+    if (lang.startsWith("en-")) score += 15;
+    if (name.includes("natural")) score += 35;
+    if (name.includes("neural")) score += 30;
+    if (name.includes("online")) score += 20;
+    if (/\b(ryan|george|thomas|libby|sonia)\b/.test(name)) score += 18;
+    if (name.includes("microsoft")) score += 8;
+    if (voice.localService) score += 3;
+    return { voice, score };
+  });
+  scored.sort((a, b) => b.score - a.score);
+  return scored[0]?.voice ?? null;
+}
+
+function splitSpeechIntoChunks(text: string): string[] {
+  const sentences = text
+    .split(/(?<=[.!?,;:])\s+/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+
+  const chunks: string[] = [];
+  let current = "";
+  for (const sentence of sentences) {
+    if (`${current} ${sentence}`.trim().length > 180 && current) {
+      chunks.push(current);
+      current = sentence;
+    } else {
+      current = `${current} ${sentence}`.trim();
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks.length ? chunks : [text];
+}
+
+function humanPauseMs(text: string): number {
+  const trimmed = text.trim();
+  if (/[!?]$/.test(trimmed)) return 360;
+  if (/\.$/.test(trimmed)) return trimmed.length < 55 ? 300 : 420;
+  if (/[,;:]$/.test(trimmed)) return 190;
+  if (trimmed.length > 140) return 260;
+  return 145;
+}
+
+function completeSentencePrefix(text: string): string {
+  const match = text.match(/^([\s\S]*[.!?])(?:\s|$)/);
+  if (match?.[1]) return match[1].trim();
+  if (text.length > 120 && /[,;:]\s/.test(text)) {
+    const index = Math.max(text.lastIndexOf(", "), text.lastIndexOf("; "), text.lastIndexOf(": "));
+    if (index > 60) return text.slice(0, index + 1).trim();
+  }
+  return "";
+}
+
+function toSpokenText(text: string): string {
+  return text
+    .replace(/["]/g, "")
+    .replace(/\u00A3\s?([\d,]+(?:\.\d{1,2})?)/g, "$1 pounds")
+    .replace(/£\s?([\d,]+(?:\.\d{1,2})?)/g, "$1 pounds")
+    .replace(/\b(\d+(?:\.\d+)?)%/g, "$1 percent")
+    .replace(/\bGWP\b/g, "G W P")
+    .replace(/\bYTD\b/g, "year to date")
+    .replace(/\bavg\b/gi, "average")
+    .replace(/\bSMS\b/g, "text message")
+    .replace(/\bOD1N\b/g, "Odin")
+    .replace(/\bNew-Renewals\b/g, "New Renewals")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function parseSmsCommand(text: string): PendingSms | null {
@@ -701,39 +1162,46 @@ function parseAddContactCommand(text: string): AddContactCommand | null {
 
 function parseStatsSmsCommand(text: string): StatsSmsCommand | null {
   const cleaned = text.trim().replace(/^(?:hey\s+)?od(?:i|1)n[,\s]+/i, "");
+  const lower = cleaned.toLowerCase();
+  const knownKind = getStatsKind(lower);
   const patterns = [
-    /^(?:can\s+you\s+)?send\s+(.+?)\s+(?:the\s+)?(renewal|renewals|call|calls)\s+stats(?:\s+for\s+(today|this week|week|this month|month|ytd|year to date))?$/i,
-    /^(?:can\s+you\s+)?send\s+(?:the\s+)?(renewal|renewals|call|calls)\s+stats(?:\s+for\s+(today|this week|week|this month|month|ytd|year to date))?\s+to\s+(.+?)$/i,
-    /^(?:can\s+you\s+)?text\s+(.+?)\s+(?:the\s+)?(renewal|renewals|call|calls)\s+stats(?:\s+for\s+(today|this week|week|this month|month|ytd|year to date))?$/i,
+    /^(?:can\s+you\s+|please\s+)?(?:send|text|sms|message)\s+(.+?)\s+(?:the\s+)?(renewal|renewals|renewel|renewels|renwal|renwals|renewls|call|calls)\s+(?:stats|summary|figures|numbers|report|update)(?:\s+for\s+(today|this week|week|this month|month|ytd|year to date))?$/i,
+    /^(?:can\s+you\s+|please\s+)?(?:send|text|sms|message)\s+(?:the\s+)?(renewal|renewals|renewel|renewels|renwal|renwals|renewls|call|calls)\s+(?:stats|summary|figures|numbers|report|update)(?:\s+for\s+(today|this week|week|this month|month|ytd|year to date))?\s+to\s+(.+?)$/i,
+    /^(?:can\s+you\s+|please\s+)?(?:send|text|sms|message)\s+(.+?)\s+(?:this\s+week(?:'s)?|this\s+month(?:'s)?|today's|ytd)?\s*(renewal|renewals|renewel|renewels|renwal|renwals|renewls|call|calls)\s+(?:stats|summary|figures|numbers|report|update)$/i,
   ];
 
   let toName = "";
   let rawKind = "";
-  let rawPeriod = "today";
+  let rawPeriod = getRawPeriod(lower);
 
   const directMatch = cleaned.match(patterns[0]);
   if (directMatch) {
     toName = directMatch[1]?.trim() ?? "";
     rawKind = directMatch[2]?.toLowerCase() ?? "";
-    rawPeriod = (directMatch[3] ?? "today").toLowerCase();
+    rawPeriod = (directMatch[3] ?? rawPeriod).toLowerCase();
   } else {
     const toMatch = cleaned.match(patterns[1]);
     if (toMatch) {
       rawKind = toMatch[1]?.toLowerCase() ?? "";
-      rawPeriod = (toMatch[2] ?? "today").toLowerCase();
+      rawPeriod = (toMatch[2] ?? rawPeriod).toLowerCase();
       toName = toMatch[3]?.trim() ?? "";
     } else {
       const textMatch = cleaned.match(patterns[2]);
-      if (!textMatch) return null;
-      toName = textMatch[1]?.trim() ?? "";
-      rawKind = textMatch[2]?.toLowerCase() ?? "";
-      rawPeriod = (textMatch[3] ?? "today").toLowerCase();
+      if (textMatch) {
+        toName = textMatch[1]?.trim() ?? "";
+        rawKind = textMatch[2]?.toLowerCase() ?? "";
+      } else {
+        const contactName = extractKnownContactName(cleaned);
+        if (!contactName || !knownKind || !/\b(?:send|text|sms|message)\b/.test(lower)) return null;
+        toName = contactName;
+        rawKind = knownKind;
+      }
     }
   }
 
   if (!toName || !rawKind) return null;
 
-  const kind = rawKind.startsWith("call") ? "calls" : "renewals";
+  const kind = rawKind === "combined" ? "combined" : rawKind.startsWith("call") ? "calls" : "renewals";
   const period =
     rawPeriod === "this week" || rawPeriod === "week" ? "week" :
     rawPeriod === "this month" || rawPeriod === "month" ? "month" :
@@ -741,6 +1209,30 @@ function parseStatsSmsCommand(text: string): StatsSmsCommand | null {
     "today";
 
   return { toName, kind, period };
+}
+
+function getStatsKind(text: string): "renewals" | "calls" | "combined" | "" {
+  const hasCalls = /\b(?:call|calls|phone|phones|pbx)\b/.test(text);
+  const hasRenewals = /\b(?:renewal|renewals|renewel|renewels|renwal|renwals|renewls)\b/.test(text);
+  if (hasCalls && hasRenewals) return "combined";
+  if (hasCalls) return "calls";
+  if (hasRenewals) return "renewals";
+  return "";
+}
+
+function getRawPeriod(text: string): string {
+  if (/\b(?:ytd|year to date)\b/.test(text)) return "ytd";
+  if (/\b(?:this month|month)\b/.test(text)) return "this month";
+  if (/\b(?:this week|week|weekly)\b/.test(text)) return "this week";
+  return "today";
+}
+
+function extractKnownContactName(text: string): string {
+  const lower = text.toLowerCase();
+  const commonContacts = ["Thomas", "George", "James Noble", "James"];
+  return commonContacts
+    .sort((a, b) => b.length - a.length)
+    .find((name) => new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(lower)) ?? "";
 }
 
 function parseQuickAnswerIntent(text: string): QuickAnswerIntent | null {
