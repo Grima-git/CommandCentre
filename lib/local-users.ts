@@ -25,7 +25,10 @@ export type StoredUser = {
 
 export type PublicUser = Omit<StoredUser, "passwordHash" | "salt">;
 
-const DATA_DIR = path.join(process.cwd(), "data");
+// On Netlify, process.cwd() is /var/task (read-only).
+// Use /tmp for writable ephemeral storage in serverless environments.
+const IS_SERVERLESS = process.cwd() === "/var/task" || process.env.NETLIFY === "true";
+const DATA_DIR = IS_SERVERLESS ? path.join("/tmp", "cc-data") : path.join(process.cwd(), "data");
 const USERS_FILE = path.join(DATA_DIR, "users.json");
 
 function ensureStore() {
