@@ -29,4 +29,6 @@
 [context.production.environment]
   # Safety net: never run with the dev auth bypass in production.
   DEV_AUTH_BYPASS = "0"
-  NODE_ENV        = "production"
+  # NODE_ENV is intentionally omitted here — setting it to "production" at
+  # build time causes npm to skip devDependencies (tailwindcss, postcss, etc).
+  # Next.js sets NODE_ENV=production internally during `next build`.
