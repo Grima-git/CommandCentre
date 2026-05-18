@@ -15,7 +15,7 @@ const MODULES_FILE = path.join(DATA_DIR, "modules.json");
 type ModulesConfig = { enabledModules: SectionId[] };
 
 // All toggleable modules are on by default.
-const DEFAULT_CONFIG: ModulesConfig = { enabledModules: ["renewals", "calls", "hr"] };
+const DEFAULT_CONFIG: ModulesConfig = { enabledModules: ["renewals", "calls", "hr", "email", "calendar", "teams"] };
 
 function ensureStore() {
   if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });

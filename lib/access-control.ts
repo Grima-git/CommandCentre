@@ -58,7 +58,7 @@ export const SECTIONS: SectionDefinition[] = [
 export const DEFAULT_USER_SECTIONS: SectionId[] = ["home", "renewals", "calls", "hr"];
 
 // Sections that a global admin can toggle on/off app-wide.
-export const TOGGLEABLE_MODULES: SectionId[] = ["renewals", "calls", "hr"];
+export const TOGGLEABLE_MODULES: SectionId[] = ["renewals", "calls", "hr", "email", "calendar", "teams"];
 
 export function allSectionIds(): SectionId[] {
   return SECTIONS.map((section) => section.id);

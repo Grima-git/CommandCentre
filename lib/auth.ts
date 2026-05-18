@@ -102,6 +102,10 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         token.msExpiresAt = account.expires_at; // unix seconds
       }
 
+      // Microsoft-specific sections: anyone who signs in via Microsoft gets these.
+      const MS_SECTIONS: SectionId[] = ["email", "calendar", "teams"];
+      const isMicrosoftLogin = account?.provider === "microsoft-entra-id";
+
       if (user?.email) {
         const email = user.email.toLowerCase();
         const isGlobalAdmin = email === GLOBAL_ADMIN_EMAIL.toLowerCase();
@@ -110,10 +114,17 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         token.role = exec?.role ?? null;
         token.appRole = isGlobalAdmin ? "global_admin" : (localUser?.role ?? "user");
         token.title = localUser?.title ?? exec?.title ?? (isGlobalAdmin ? "Global Admin" : null);
-        token.sections = isGlobalAdmin
-          ? allSectionIds()
-          : (localUser?.sections ?? normalizeSections(DEFAULT_USER_SECTIONS, "user"));
         token.name = localUser?.name ?? user.name ?? token.name;
+
+        if (isGlobalAdmin) {
+          token.sections = allSectionIds();
+        } else {
+          const baseSections = localUser?.sections ?? normalizeSections(DEFAULT_USER_SECTIONS, "user");
+          // Microsoft login users automatically get email/calendar/teams
+          token.sections = isMicrosoftLogin
+            ? Array.from(new Set<SectionId>([...(baseSections as SectionId[]), ...MS_SECTIONS]))
+            : baseSections;
+        }
       } else if (token.email) {
         const email = String(token.email).toLowerCase();
         const isGlobalAdmin = email === GLOBAL_ADMIN_EMAIL.toLowerCase();

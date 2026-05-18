@@ -40,6 +40,9 @@ const MODULE_DESC: Partial<Record<SectionId, string>> = {
   renewals: "OpenGI renewals KPIs, advisor performance and AI insights",
   calls: "FusionPBX call-centre analytics",
   hr: "Sage HR headcount and absence data",
+  email: "Outlook inbox via Microsoft 365 (requires Microsoft login)",
+  calendar: "Outlook calendar via Microsoft 365 (requires Microsoft login)",
+  teams: "Microsoft Teams chats (requires Microsoft login)",
 };
 
 export function AdminUsersPanel({ currentUserEmail, currentRole }: { currentUserEmail: string; currentRole: UserRole }) {

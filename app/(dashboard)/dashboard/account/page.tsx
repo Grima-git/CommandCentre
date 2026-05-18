@@ -12,7 +12,11 @@ export default async function AccountPage() {
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
-      <Topbar title="Account" />
+      <Topbar
+        title="Account"
+        subtitle="Your profile and access."
+        user={{ name: session.user.name ?? "You" }}
+      />
       <AccountOverview
         name={session.user.name ?? "Unknown"}
         email={session.user.email ?? ""}
