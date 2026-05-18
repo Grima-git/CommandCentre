@@ -89,6 +89,16 @@ export type TeamsChat = {
   topic?: string;
   chatType: "oneOnOne" | "group" | "meeting";
   lastUpdatedDateTime: string;
+  lastMessagePreview?: {
+    createdDateTime: string;
+    isDeleted?: boolean;
+    messageType?: string;
+    body?: { contentType: string; content: string };
+    from?: {
+      user?: { displayName: string; id: string };
+      application?: { displayName: string };
+    };
+  };
   members?: {
     displayName: string;
     email?: string;
@@ -151,10 +161,12 @@ export async function getCalendarEvents(
 export async function getTeamsChats(
   accessToken: string,
 ): Promise<TeamsChat[]> {
-  // Note: chats API does not support $orderby — sort client-side after fetch.
+  // $orderby is not supported on this endpoint — sort client-side.
+  // lastMessagePreview gives the actual last-message timestamp so the sort
+  // matches what the real Teams client shows.
   const params = new URLSearchParams({
-    $top: "20",
-    $expand: "members",
+    $top: "50",
+    $expand: "members,lastMessagePreview",
   });
 
   const data = await graphFetch<{ value: TeamsChat[] }>(
@@ -162,12 +174,12 @@ export async function getTeamsChats(
     `/me/chats?${params.toString()}`,
   );
 
-  // Sort by lastUpdatedDateTime descending client-side.
-  data.value.sort(
-    (a, b) =>
-      new Date(b.lastUpdatedDateTime).getTime() -
-      new Date(a.lastUpdatedDateTime).getTime(),
-  );
+  // Sort by last real message time, falling back to chat metadata time.
+  data.value.sort((a, b) => {
+    const tA = a.lastMessagePreview?.createdDateTime ?? a.lastUpdatedDateTime;
+    const tB = b.lastMessagePreview?.createdDateTime ?? b.lastUpdatedDateTime;
+    return new Date(tB).getTime() - new Date(tA).getTime();
+  });
 
   return data.value;
 }

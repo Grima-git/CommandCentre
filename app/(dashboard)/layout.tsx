@@ -4,11 +4,21 @@ import { StatusBar } from "@/components/status-bar";
 import { redirect } from "next/navigation";
 import { canAccessPath, firstAccessiblePath, normalizeSections, type SectionId } from "@/lib/access-control";
 import { getEnabledModules } from "@/lib/modules";
+import { upsertUserFromLogin } from "@/lib/local-users";
 import { headers } from "next/headers";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   const session = await auth();
   if (!session?.user) redirect("/login");
+
+  // Ensure the logged-in user exists in cc_users — covers people already signed
+  // in before the upsert was added and anyone whose JWT was cached at the time.
+  if (session.user.email) {
+    await upsertUserFromLogin({
+      email: session.user.email,
+      name: session.user.name ?? session.user.email.split("@")[0],
+    }).catch(() => null);
+  }
 
   const sections = normalizeSections(session.user.sections, session.user.appRole);
   // Fallback to all modules enabled if DB is unavailable — never crash the layout.

@@ -9,6 +9,12 @@ type TeamsChat = {
   topic?: string;
   chatType: "oneOnOne" | "group" | "meeting";
   lastUpdatedDateTime: string;
+  lastMessagePreview?: {
+    createdDateTime: string;
+    isDeleted?: boolean;
+    body?: { content: string };
+    from?: { user?: { displayName: string } };
+  };
   members?: { displayName: string; email?: string }[];
 };
 
@@ -319,11 +325,29 @@ export default function TeamsOverview({ userName }: { userName: string }) {
                 chat.chatType !== "oneOnOne" && chat.members ? chat.members.length : null;
               const isActive = selectedChat?.id === chat.id;
 
+              // Use last message time if available, otherwise chat metadata time
+              const lastTime =
+                chat.lastMessagePreview?.createdDateTime ?? chat.lastUpdatedDateTime;
+              // Preview text: sender + message snippet
+              const previewSender = chat.lastMessagePreview?.from?.user?.displayName;
+              const previewBody = chat.lastMessagePreview?.body?.content
+                ? stripHtml(chat.lastMessagePreview.body.content).slice(0, 60)
+                : null;
+              const previewText = previewBody
+                ? previewSender
+                  ? `${previewSender.split(" ")[0]}: ${previewBody}`
+                  : previewBody
+                : chat.chatType === "oneOnOne"
+                ? "Direct message"
+                : chat.chatType === "meeting"
+                ? "Meeting chat"
+                : `Group chat${memberCount !== null ? ` · ${memberCount} members` : ""}`;
+
               return (
                 <button
                   key={chat.id}
                   onClick={() => {
-                    atBottomRef.current = true; // reset scroll-tracking on new chat
+                    atBottomRef.current = true;
                     setSelectedChat(chat);
                   }}
                   className={cn(
@@ -347,24 +371,10 @@ export default function TeamsOverview({ userName }: { userName: string }) {
                     <div className="flex items-center justify-between gap-1 mb-0.5">
                       <span className="text-sm font-medium truncate">{name}</span>
                       <span className="text-[11px] text-txt-muted shrink-0">
-                        {relTime(chat.lastUpdatedDateTime)}
+                        {relTime(lastTime)}
                       </span>
                     </div>
-                    <div className="text-xs text-txt-muted flex items-center gap-1.5">
-                      <span>
-                        {chat.chatType === "oneOnOne"
-                          ? "Direct message"
-                          : chat.chatType === "meeting"
-                          ? "Meeting chat"
-                          : "Group chat"}
-                      </span>
-                      {memberCount !== null && (
-                        <span className="flex items-center gap-0.5">
-                          <Users className="w-3 h-3" />
-                          {memberCount}
-                        </span>
-                      )}
-                    </div>
+                    <p className="text-xs text-txt-muted truncate">{previewText}</p>
                   </div>
                 </button>
               );
