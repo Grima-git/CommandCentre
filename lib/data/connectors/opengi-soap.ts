@@ -3,15 +3,16 @@
 // Wraps the XML-in-SOAP-body pattern that OpenGI's ExecuteQuery endpoint uses.
 // Each public function calls a specific stored procedure and returns typed rows.
 // Returns null on any failure so callers can fall back to mock data.
-import { assertAllowedUrl } from "@/lib/security";
+//
+// Requests are routed through a lightweight Node.js proxy running on the
+// whitelisted Windows Server VM (SOAP_PROXY_URL) rather than calling OpenGI
+// directly, because Netlify serverless functions have no fixed outbound IP.
 
-const SOAP_URL = process.env.OPENGI_SOAP_URL ?? "";
-const SAFE_SOAP_URL = SOAP_URL
-  ? assertAllowedUrl(SOAP_URL, ["infoservice-myfi001.opengihosting.com"])
-  : "";
+const PROXY_URL = (process.env.SOAP_PROXY_URL ?? "").replace(/\/$/, "");
+const PROXY_SECRET = process.env.SOAP_PROXY_SECRET ?? "";
 
 export function isOpenGiConfigured(): boolean {
-  return !!process.env.OPENGI_SOAP_URL;
+  return !!(PROXY_URL && PROXY_SECRET);
 }
 
 // ---------- SOAP plumbing ----------
@@ -40,10 +41,16 @@ async function callSoap(storedProc: string, params: string[]): Promise<string | 
   </soap:Body>
 </soap:Envelope>`;
 
+  if (!PROXY_URL || !PROXY_SECRET) return null;
+
   try {
-    const res = await fetch(SAFE_SOAP_URL, {
+    const res = await fetch(PROXY_URL, {
       method: "POST",
-      headers: { "Content-Type": "text/xml; charset=utf-8" },
+      headers: {
+        "Content-Type": "text/xml; charset=utf-8",
+        "x-proxy-secret": PROXY_SECRET,
+        "SOAPAction": `"www.opengi.co.uk/ExecuteQuery"`,
+      },
       body: soap,
       cache: "no-store",
     });
