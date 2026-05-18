@@ -1,16 +1,19 @@
 import { OdinInterface } from "@/components/odin/odin";
 import { auth } from "@/lib/auth";
-import { findExecByEmail, DEV_USER } from "@/lib/users";
 
 export const dynamic = "force-dynamic";
 
 export default async function HomePage() {
   const session = await auth();
-  const exec = findExecByEmail(session?.user?.email) ?? DEV_USER;
+  // Use the real session name — never fall back to a hardcoded exec name.
+  const userName =
+    session?.user?.name ??
+    session?.user?.email?.split("@")[0] ??
+    "there";
 
   return (
     <div className="flex flex-col h-full">
-      <OdinInterface userName={exec.name} />
+      <OdinInterface userName={userName} />
     </div>
   );
 }

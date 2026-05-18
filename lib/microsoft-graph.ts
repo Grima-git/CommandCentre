@@ -151,15 +151,22 @@ export async function getCalendarEvents(
 export async function getTeamsChats(
   accessToken: string,
 ): Promise<TeamsChat[]> {
+  // Note: chats API does not support $orderby — sort client-side after fetch.
   const params = new URLSearchParams({
     $top: "20",
     $expand: "members",
-    $orderby: "lastUpdatedDateTime desc",
   });
 
   const data = await graphFetch<{ value: TeamsChat[] }>(
     accessToken,
     `/me/chats?${params.toString()}`,
+  );
+
+  // Sort by lastUpdatedDateTime descending client-side.
+  data.value.sort(
+    (a, b) =>
+      new Date(b.lastUpdatedDateTime).getTime() -
+      new Date(a.lastUpdatedDateTime).getTime(),
   );
 
   return data.value;

@@ -1,4 +1,3 @@
-import { auth } from "@/lib/auth";
 import { allSectionIds, normalizeSections, type SectionId, type UserRole } from "@/lib/access-control";
 import { getPublicUsers, updateLocalUser } from "@/lib/local-users";
 import { requireApiAccess, safeText } from "@/lib/security";
@@ -17,17 +16,28 @@ export async function GET(req: Request) {
     limit: { windowMs: 60_000, max: 60 },
   });
   if (access.response) return access.response;
-  const session = access.session;
-  if (!isAdmin(session?.user.appRole)) return Response.json({ ok: false, error: "Forbidden" }, { status: 403 });
-  const users = await getPublicUsers();
-  return Response.json({ ok: true, users, sections: allSectionIds() });
+  if (!isAdmin(access.session?.user.appRole)) {
+    return Response.json({ ok: false, error: "Forbidden" }, { status: 403 });
+  }
+
+  try {
+    const users = await getPublicUsers();
+    return Response.json({ ok: true, users, sections: allSectionIds() });
+  } catch (error) {
+    console.error("[admin/users GET]", error);
+    return Response.json(
+      { ok: false, error: "Could not load users" },
+      { status: 500 },
+    );
+  }
 }
 
 export async function PATCH(req: Request) {
   const access = await requireApiAccess(req, { role: "admin", limit: { windowMs: 60_000, max: 30 } });
   if (access.response) return access.response;
-  const session = access.session;
-  if (!isAdmin(session?.user.appRole)) return Response.json({ ok: false, error: "Forbidden" }, { status: 403 });
+  if (!isAdmin(access.session?.user.appRole)) {
+    return Response.json({ ok: false, error: "Forbidden" }, { status: 403 });
+  }
 
   let body: { email?: string; role?: UserRole; sections?: SectionId[]; title?: string; name?: string };
   try {
@@ -48,6 +58,9 @@ export async function PATCH(req: Request) {
     });
     return Response.json({ ok: true, user });
   } catch (error) {
-    return Response.json({ ok: false, error: error instanceof Error ? error.message : "Could not update user" }, { status: 400 });
+    return Response.json(
+      { ok: false, error: error instanceof Error ? error.message : "Could not update user" },
+      { status: 400 },
+    );
   }
 }
