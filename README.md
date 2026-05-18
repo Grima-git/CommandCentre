@@ -64,7 +64,7 @@ Command Centre gives the Young Driver Insurance management team a single place t
    (via VM proxy)       Mail / Calendar        Claude (AI)
           │             Teams
           ▼
-   Windows Server VM (78.157.192.42)
+   Windows Server VM (whitelisted IP)
    soap-proxy :3001  ──► OpenGI InfoService
    (whitelisted IP)
 ```
@@ -220,7 +220,7 @@ Copy `.env.example` to `.env.local` for development, or set in **Netlify → Sit
 
 | Variable | Description |
 |---|---|
-| `SOAP_PROXY_URL` | URL of the SOAP proxy on the Windows VM, e.g. `http://78.157.192.42:3001` |
+| `SOAP_PROXY_URL` | URL of the SOAP proxy on the Windows VM, e.g. `http://<server-ip>:3001` |
 | `SOAP_PROXY_SECRET` | Shared secret — must match `SECRET` in `soap-proxy/server.js` on the VM |
 
 ### PBX (FusionPBX)
@@ -274,11 +274,7 @@ Go to **Netlify → Site → Deploys → Trigger deploy**.
 
 ## Microsoft Entra ID (Azure AD) Setup
 
-The app is registered in Azure under:
-
-- **Application ID:** `dd1e2a2d-5f91-458a-bba2-7359699ff884`
-- **Directory (Tenant) ID:** `04e25c52-b6ac-4993-8e8b-37c6d92d9b25`
-- **Client secret expiry:** 12/05/2028
+The app is registered in Azure. IDs are stored as Netlify environment variables — see your Azure Portal → App registrations for the values.
 
 ### Required API permissions (Microsoft Graph, Delegated)
 
@@ -301,7 +297,7 @@ https://command-centre-myfirst.netlify.app/api/auth/callback/microsoft-entra-id
 
 ## SOAP Proxy (Windows Server VM)
 
-Because Netlify serverless functions have no fixed outbound IP, OpenGI SOAP requests are proxied through a Windows Server VM (`78.157.192.42`) whose IP is whitelisted by OpenGI.
+Because Netlify serverless functions have no fixed outbound IP, OpenGI SOAP requests are proxied through a Windows Server VM (IP stored in `SOAP_PROXY_URL` env var) whose IP is whitelisted by OpenGI.
 
 ### Proxy server location
 
