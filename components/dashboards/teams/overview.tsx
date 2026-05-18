@@ -194,12 +194,12 @@ export default function TeamsOverview({ userName }: { userName: string }) {
       const res = await fetch("/api/ms/teams");
       const data = (await res.json()) as { chats?: TeamsChat[]; error?: string };
       if (!res.ok) throw new Error(data?.error ?? `Error ${res.status}`);
-      // Sort most-recently-active first
-      const sorted = (data.chats ?? []).sort(
-        (a, b) =>
-          new Date(b.lastUpdatedDateTime).getTime() -
-          new Date(a.lastUpdatedDateTime).getTime(),
-      );
+      // Sort by last message time (preview), falling back to metadata time
+      const sorted = (data.chats ?? []).sort((a, b) => {
+        const tA = a.lastMessagePreview?.createdDateTime ?? a.lastUpdatedDateTime;
+        const tB = b.lastMessagePreview?.createdDateTime ?? b.lastUpdatedDateTime;
+        return new Date(tB).getTime() - new Date(tA).getTime();
+      });
       setChats(sorted);
     } catch (e) {
       if (!silent) setChatsError(e instanceof Error ? e.message : "Failed to load Teams");
