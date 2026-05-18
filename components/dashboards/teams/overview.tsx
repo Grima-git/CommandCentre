@@ -450,17 +450,46 @@ export default function TeamsOverview({ userName }: { userName: string }) {
                     <div className="flex-1 h-px bg-bg-line" />
                   </div>
 
-                  <div className="space-y-3">
-                    {dayMsgs.map((msg) => {
+                  <div className="space-y-0">
+                    {dayMsgs.map((msg, i) => {
                       const senderName =
                         msg.from?.user?.displayName ??
                         msg.from?.application?.displayName ??
                         "Unknown";
+                      const senderId =
+                        msg.from?.user?.id ?? msg.from?.application?.displayName ?? senderName;
                       const content = stripHtml(msg.body.content);
                       if (!content) return null;
 
-                      return (
-                        <div key={msg.id} className="flex gap-2.5">
+                      // Group with previous if same sender within 5 minutes
+                      const prev = dayMsgs[i - 1];
+                      const prevSenderId =
+                        prev?.from?.user?.id ??
+                        prev?.from?.application?.displayName ??
+                        prev?.from?.user?.displayName;
+                      const timeDiff = prev
+                        ? new Date(msg.createdDateTime).getTime() -
+                          new Date(prev.createdDateTime).getTime()
+                        : Infinity;
+                      const isContinuation =
+                        prevSenderId === senderId && timeDiff < 5 * 60 * 1000;
+
+                      return isContinuation ? (
+                        // Continuation: no avatar, no name — just text aligned under previous
+                        <div key={msg.id} className="flex gap-2.5 group pl-0.5">
+                          {/* Spacer matches avatar width */}
+                          <div className="w-8 shrink-0 flex items-start justify-center pt-1">
+                            <span className="text-[10px] text-txt-muted opacity-0 group-hover:opacity-100 leading-none select-none">
+                              {msgTime(msg.createdDateTime)}
+                            </span>
+                          </div>
+                          <p className="flex-1 min-w-0 text-sm text-txt-secondary whitespace-pre-wrap break-words leading-relaxed pb-0.5">
+                            {content}
+                          </p>
+                        </div>
+                      ) : (
+                        // New sender block: show avatar + name + time
+                        <div key={msg.id} className="flex gap-2.5 pt-3">
                           <div
                             className={cn(
                               "w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-bold text-white shrink-0 mt-0.5",
