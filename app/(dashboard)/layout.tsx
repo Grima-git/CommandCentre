@@ -39,7 +39,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const displayTitle = session.user.title ?? "Team Member";
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="h-screen flex flex-col overflow-hidden">
       <div className="flex flex-1 min-h-0">
         <Sidebar
           user={{
