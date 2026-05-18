@@ -264,6 +264,39 @@ function updateLocalUserFile(
 }
 
 // ---------------------------------------------------------------------------
+// Upsert on login — called from auth.ts on every sign-in so every user
+// who authenticates (SSO or credentials) gets a row in cc_users.
+// ---------------------------------------------------------------------------
+
+export async function upsertUserFromLogin(input: {
+  email: string;
+  name: string;
+}): Promise<void> {
+  if (!isDbConfigured()) return; // file store: users must self-register
+  const email = input.email.trim().toLowerCase();
+  const name = (input.name.trim()) || email.split("@")[0];
+  const role: UserRole =
+    email === GLOBAL_ADMIN_EMAIL.toLowerCase() ? "global_admin" : "user";
+  const sections = JSON.stringify(
+    role === "global_admin" ? allSectionIds() : DEFAULT_USER_SECTIONS,
+  );
+  const title = role === "global_admin" ? "Global Admin" : "Team Member";
+  const id = randomBytes(12).toString("hex");
+
+  // INSERT the user the first time; on subsequent logins just refresh their
+  // display name (and updated_at) but leave role/title/sections alone so
+  // admin edits are preserved.
+  await dbQuery(
+    `INSERT INTO cc_users (id, email, name, title, role, sections, password_hash, salt)
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb, '', '')
+     ON CONFLICT (email) DO UPDATE
+       SET name       = EXCLUDED.name,
+           updated_at = NOW()`,
+    [id, email, name, title, role, sections],
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Public API — automatically routes to DB or file based on DATABASE_URL
 // ---------------------------------------------------------------------------
 

@@ -2,7 +2,7 @@ import NextAuth, { type DefaultSession } from "next-auth";
 import MicrosoftEntraID from "next-auth/providers/microsoft-entra-id";
 import Credentials from "next-auth/providers/credentials";
 import { DEV_USER, findExecByEmail, type ExecRole } from "./users";
-import { authenticateLocalUser, findUserByEmail } from "./local-users";
+import { authenticateLocalUser, findUserByEmail, upsertUserFromLogin } from "./local-users";
 import { DEFAULT_USER_SECTIONS, GLOBAL_ADMIN_EMAIL, allSectionIds, normalizeSections, type SectionId, type UserRole } from "./access-control";
 
 const isDevBypass = process.env.DEV_AUTH_BYPASS === "1";
@@ -83,6 +83,15 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       ],
   callbacks: {
     async jwt({ token, user, account }) {
+      // On initial sign-in (account is only present on first login),
+      // upsert the user into cc_users so the admin panel shows them.
+      if (account && user?.email) {
+        await upsertUserFromLogin({
+          email: user.email,
+          name: user.name ?? user.email.split("@")[0],
+        }).catch(() => null); // never block sign-in if DB is down
+      }
+
       // On initial Microsoft sign-in, store the Graph access token.
       if (account?.provider === "microsoft-entra-id") {
         token.msAccessToken = account.access_token;
