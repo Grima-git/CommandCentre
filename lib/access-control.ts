@@ -70,7 +70,7 @@ export function normalizeSections(sections: unknown, role: UserRole): SectionId[
   const result = source.filter((section): section is SectionId => typeof section === "string" && valid.has(section as SectionId));
   const withHome: SectionId[] = result.includes("home") ? result : ["home", ...result];
   // account is always visible to everyone
-  const withAccount = withHome.includes("account") ? withHome : [...withHome, "account"];
+  const withAccount: SectionId[] = withHome.includes("account") ? withHome : [...withHome, "account"];
   if (role === "global_admin" || role === "admin") {
     return Array.from(new Set<SectionId>([...withAccount, "admin"]));
   }
