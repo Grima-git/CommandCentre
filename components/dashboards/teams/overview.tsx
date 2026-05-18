@@ -78,10 +78,14 @@ function chatName(chat: TeamsChat, me: string) {
 }
 
 function initials(name: string) {
-  return name.split(" ").map((p) => p[0]).join("").toUpperCase().slice(0, 2);
+  return name
+    .split(" ")
+    .map((p) => p[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
 }
 
-// Deterministic colour from a name string
 const AVATAR_COLOURS = [
   "bg-violet-600", "bg-blue-600", "bg-emerald-600", "bg-rose-600",
   "bg-amber-600", "bg-cyan-600", "bg-pink-600", "bg-indigo-600",
@@ -98,7 +102,7 @@ function avatarColour(name: string) {
 
 function MsSignIn() {
   return (
-    <div className="flex flex-col items-center justify-center h-full gap-4 text-center p-8">
+    <div className="flex flex-col items-center justify-center flex-1 gap-4 text-center p-8">
       <div className="w-14 h-14 rounded-full bg-brand-purple/20 flex items-center justify-center">
         <svg className="w-7 h-7" viewBox="0 0 21 21" fill="none">
           <rect x="1" y="1" width="9" height="9" fill="#f25022" />
@@ -158,6 +162,8 @@ function MessageSkeleton() {
 // Main component
 // ---------------------------------------------------------------------------
 
+const REFRESH_INTERVAL = 10_000; // 10 seconds
+
 export default function TeamsOverview({ userName }: { userName: string }) {
   const [chats, setChats] = useState<TeamsChat[]>([]);
   const [chatsLoading, setChatsLoading] = useState(true);
@@ -169,55 +175,87 @@ export default function TeamsOverview({ userName }: { userName: string }) {
   const [msgsError, setMsgsError] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  // Track whether the user has scrolled up — if so, don't auto-scroll on refresh
+  const atBottomRef = useRef(true);
+  const msgsPanelRef = useRef<HTMLDivElement>(null);
 
-  const loadChats = useCallback(async () => {
-    setChatsLoading(true);
+  // ── Data fetching ──────────────────────────────────────────────────────────
+
+  const fetchChats = useCallback(async (silent = false) => {
+    if (!silent) setChatsLoading(true);
     setChatsError(null);
     try {
       const res = await fetch("/api/ms/teams");
       const data = (await res.json()) as { chats?: TeamsChat[]; error?: string };
       if (!res.ok) throw new Error(data?.error ?? `Error ${res.status}`);
-      setChats(data.chats ?? []);
+      // Sort most-recently-active first
+      const sorted = (data.chats ?? []).sort(
+        (a, b) =>
+          new Date(b.lastUpdatedDateTime).getTime() -
+          new Date(a.lastUpdatedDateTime).getTime(),
+      );
+      setChats(sorted);
     } catch (e) {
-      setChatsError(e instanceof Error ? e.message : "Failed to load Teams");
+      if (!silent) setChatsError(e instanceof Error ? e.message : "Failed to load Teams");
     } finally {
-      setChatsLoading(false);
+      if (!silent) setChatsLoading(false);
     }
   }, []);
 
-  const loadMessages = useCallback(async (chatId: string) => {
-    setMsgsLoading(true);
-    setMsgsError(null);
-    setMessages([]);
+  const fetchMessages = useCallback(async (chatId: string, silent = false) => {
+    if (!silent) {
+      setMsgsLoading(true);
+      setMsgsError(null);
+      setMessages([]);
+    }
     try {
       const res = await fetch(`/api/ms/teams/messages?chatId=${encodeURIComponent(chatId)}`);
       const data = (await res.json()) as { messages?: ChatMessage[]; error?: string };
       if (!res.ok) throw new Error(data?.error ?? `Error ${res.status}`);
       setMessages(data.messages ?? []);
     } catch (e) {
-      setMsgsError(e instanceof Error ? e.message : "Failed to load messages");
+      if (!silent) setMsgsError(e instanceof Error ? e.message : "Failed to load messages");
     } finally {
-      setMsgsLoading(false);
+      if (!silent) setMsgsLoading(false);
     }
   }, []);
 
-  useEffect(() => { void loadChats(); }, [loadChats]);
+  // ── Initial load ───────────────────────────────────────────────────────────
+
+  useEffect(() => { void fetchChats(); }, [fetchChats]);
 
   useEffect(() => {
-    if (selectedChat) void loadMessages(selectedChat.id);
-  }, [selectedChat, loadMessages]);
+    if (selectedChat) void fetchMessages(selectedChat.id);
+  }, [selectedChat, fetchMessages]);
+
+  // ── Auto-refresh every 10s ─────────────────────────────────────────────────
 
   useEffect(() => {
-    if (!msgsLoading) {
+    const id = setInterval(() => {
+      void fetchChats(true);
+      if (selectedChat) void fetchMessages(selectedChat.id, true);
+    }, REFRESH_INTERVAL);
+    return () => clearInterval(id);
+  }, [fetchChats, fetchMessages, selectedChat]);
+
+  // ── Auto-scroll (only when at bottom) ──────────────────────────────────────
+
+  useEffect(() => {
+    if (!msgsLoading && atBottomRef.current) {
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
     }
   }, [messages, msgsLoading]);
 
+  const handleMsgScroll = useCallback(() => {
+    const el = msgsPanelRef.current;
+    if (!el) return;
+    atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+  }, []);
+
+  // ── Derived state ──────────────────────────────────────────────────────────
+
   const notMicrosoft = chatsError?.toLowerCase().includes("not signed in with microsoft");
 
-  if (notMicrosoft) return <MsSignIn />;
-
-  // Group messages by date for dividers
   const messagesByDate: { date: string; messages: ChatMessage[] }[] = [];
   for (const msg of messages) {
     if (msg.messageType !== "message" || msg.deletedDateTime) continue;
@@ -230,19 +268,28 @@ export default function TeamsOverview({ userName }: { userName: string }) {
     }
   }
 
+  if (notMicrosoft) return <MsSignIn />;
+
   return (
+    // flex-1 min-h-0 so this fills the remaining viewport height without growing the page
     <div className="flex flex-1 min-h-0 overflow-hidden">
-      {/* ── Chat list ─────────────────────────────────────────────────── */}
+
+      {/* ── Chat list ──────────────────────────────────────────────────────── */}
       <div
         className={cn(
-          "flex flex-col border-r border-bg-line bg-bg-panel transition-all",
-          selectedChat ? "w-72 shrink-0 hidden lg:flex" : "flex-1 lg:w-72 lg:flex-none lg:shrink-0",
+          "flex flex-col border-r border-bg-line bg-bg-panel",
+          // On mobile: full width when no chat selected, hidden when chat open
+          // On desktop (lg): always show as fixed 288px sidebar
+          selectedChat
+            ? "hidden lg:flex lg:w-72 lg:shrink-0"
+            : "flex w-full lg:w-72 lg:flex-none lg:shrink-0",
         )}
       >
-        <div className="flex items-center justify-between px-4 py-3 border-b border-bg-line">
+        {/* List header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-bg-line shrink-0">
           <span className="text-sm font-semibold">Recent chats</span>
           <button
-            onClick={() => void loadChats()}
+            onClick={() => void fetchChats()}
             disabled={chatsLoading}
             className="p-1 rounded hover:bg-bg-elev text-txt-muted disabled:opacity-50"
             title="Refresh"
@@ -251,6 +298,7 @@ export default function TeamsOverview({ userName }: { userName: string }) {
           </button>
         </div>
 
+        {/* Scrollable list */}
         <div className="flex-1 overflow-y-auto">
           {chatsLoading ? (
             <ChatListSkeleton />
@@ -274,7 +322,10 @@ export default function TeamsOverview({ userName }: { userName: string }) {
               return (
                 <button
                   key={chat.id}
-                  onClick={() => setSelectedChat(chat)}
+                  onClick={() => {
+                    atBottomRef.current = true; // reset scroll-tracking on new chat
+                    setSelectedChat(chat);
+                  }}
                   className={cn(
                     "w-full flex items-center gap-3 px-4 py-3 text-left transition hover:bg-bg-elev",
                     isActive && "bg-bg-elev border-l-2 border-brand-purple",
@@ -286,7 +337,11 @@ export default function TeamsOverview({ userName }: { userName: string }) {
                       avatarColour(name),
                     )}
                   >
-                    {chat.chatType === "oneOnOne" ? initials(name) : <Icon className="w-4 h-4" />}
+                    {chat.chatType === "oneOnOne" ? (
+                      initials(name)
+                    ) : (
+                      <Icon className="w-4 h-4" />
+                    )}
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center justify-between gap-1 mb-0.5">
@@ -318,10 +373,10 @@ export default function TeamsOverview({ userName }: { userName: string }) {
         </div>
       </div>
 
-      {/* ── Messages panel ─────────────────────────────────────────────── */}
+      {/* ── Messages panel ─────────────────────────────────────────────────── */}
       {selectedChat ? (
         <div className="flex flex-col flex-1 min-w-0 min-h-0">
-          {/* Header */}
+          {/* Panel header */}
           <div className="flex items-center gap-3 px-4 py-3 border-b border-bg-line shrink-0">
             <button
               onClick={() => setSelectedChat(null)}
@@ -344,7 +399,9 @@ export default function TeamsOverview({ userName }: { userName: string }) {
               )}
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold truncate">{chatName(selectedChat, userName)}</p>
+              <p className="text-sm font-semibold truncate">
+                {chatName(selectedChat, userName)}
+              </p>
               <p className="text-xs text-txt-muted">
                 {selectedChat.chatType === "oneOnOne"
                   ? "Direct message"
@@ -352,7 +409,7 @@ export default function TeamsOverview({ userName }: { userName: string }) {
               </p>
             </div>
             <button
-              onClick={() => void loadMessages(selectedChat.id)}
+              onClick={() => void fetchMessages(selectedChat.id)}
               disabled={msgsLoading}
               className="p-1 rounded hover:bg-bg-elev text-txt-muted disabled:opacity-50"
               title="Refresh messages"
@@ -361,8 +418,12 @@ export default function TeamsOverview({ userName }: { userName: string }) {
             </button>
           </div>
 
-          {/* Messages */}
-          <div className="flex-1 overflow-y-auto p-4 space-y-1">
+          {/* Scrollable messages — flex-1 + overflow-y-auto keeps it bounded */}
+          <div
+            ref={msgsPanelRef}
+            onScroll={handleMsgScroll}
+            className="flex-1 overflow-y-auto p-4 space-y-1 min-h-0"
+          >
             {msgsLoading ? (
               <MessageSkeleton />
             ) : msgsError ? (
@@ -379,7 +440,6 @@ export default function TeamsOverview({ userName }: { userName: string }) {
                     <div className="flex-1 h-px bg-bg-line" />
                   </div>
 
-                  {/* Messages for this day */}
                   <div className="space-y-3">
                     {dayMsgs.map((msg) => {
                       const senderName =
@@ -390,7 +450,7 @@ export default function TeamsOverview({ userName }: { userName: string }) {
                       if (!content) return null;
 
                       return (
-                        <div key={msg.id} className="flex gap-2.5 group">
+                        <div key={msg.id} className="flex gap-2.5">
                           <div
                             className={cn(
                               "w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-bold text-white shrink-0 mt-0.5",
@@ -426,7 +486,9 @@ export default function TeamsOverview({ userName }: { userName: string }) {
         <div className="hidden lg:flex flex-1 items-center justify-center">
           <div className="text-center">
             <MessageCircle className="w-10 h-10 text-txt-muted mx-auto mb-3" />
-            <p className="text-sm font-medium text-txt-secondary">Select a chat to read messages</p>
+            <p className="text-sm font-medium text-txt-secondary">
+              Select a chat to read messages
+            </p>
             <p className="text-xs text-txt-muted mt-1">Click any conversation on the left</p>
           </div>
         </div>

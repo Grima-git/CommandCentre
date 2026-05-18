@@ -8,7 +8,7 @@ export default async function TeamsPage() {
   const session = await auth();
   const userName = session?.user?.name ?? session?.user?.email?.split("@")[0] ?? "User";
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col flex-1 min-h-0">
       <Topbar title="Teams" subtitle="Microsoft Teams" user={{ name: userName }} />
       <TeamsOverview userName={userName} />
     </div>
