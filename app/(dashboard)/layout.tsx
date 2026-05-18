@@ -2,7 +2,7 @@ import { auth } from "@/lib/auth";
 import { Sidebar } from "@/components/sidebar";
 import { StatusBar } from "@/components/status-bar";
 import { redirect } from "next/navigation";
-import { canAccessPath, firstAccessiblePath, normalizeSections } from "@/lib/access-control";
+import { canAccessPath, firstAccessiblePath, normalizeSections, type SectionId } from "@/lib/access-control";
 import { getEnabledModules } from "@/lib/modules";
 import { headers } from "next/headers";
 
@@ -12,9 +12,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   const sections = normalizeSections(session.user.sections, session.user.appRole);
   // Fallback to all modules enabled if DB is unavailable — never crash the layout.
-  const enabledModules = await getEnabledModules().catch(() => [
-    "renewals", "calls", "hr", "email", "calendar", "teams",
-  ] as const);
+  const enabledModules = await getEnabledModules().catch(
+    (): SectionId[] => ["renewals", "calls", "hr", "email", "calendar", "teams"],
+  );
   const pathname = headers().get("x-pathname") ?? "";
   if (pathname.startsWith("/dashboard") && !canAccessPath(pathname, sections, session.user.appRole)) {
     redirect(firstAccessiblePath(sections));
