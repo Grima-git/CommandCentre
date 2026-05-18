@@ -2,12 +2,15 @@ import { getEnabledModules, setEnabledModules, TOGGLEABLE_MODULES } from "@/lib/
 import { requireApiAccess, jsonError } from "@/lib/security";
 import type { SectionId } from "@/lib/access-control";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 export async function GET(req: Request) {
   const { response } = await requireApiAccess(req, { role: "admin", csrf: false });
   if (response) return response;
   return Response.json({
     ok: true,
-    enabledModules: getEnabledModules(),
+    enabledModules: await getEnabledModules(),
     toggleableModules: TOGGLEABLE_MODULES,
   });
 }
@@ -27,6 +30,6 @@ export async function PATCH(req: Request) {
     return jsonError("enabledModules must be an array");
   }
 
-  setEnabledModules(body.enabledModules as SectionId[]);
-  return Response.json({ ok: true, enabledModules: getEnabledModules() });
+  await setEnabledModules(body.enabledModules as SectionId[]);
+  return Response.json({ ok: true, enabledModules: await getEnabledModules() });
 }

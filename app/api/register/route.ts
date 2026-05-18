@@ -1,6 +1,5 @@
-import { createLocalUser } from "@/lib/local-users";
+import { createLocalUser, getPublicUsers } from "@/lib/local-users";
 import { GLOBAL_ADMIN_EMAIL } from "@/lib/access-control";
-import { getPublicUsers } from "@/lib/local-users";
 import { getClientKey, checkRateLimit, jsonError, safeText, validateCsrf } from "@/lib/security";
 
 export const runtime = "nodejs";
@@ -20,12 +19,12 @@ export async function POST(req: Request) {
 
   try {
     const email = safeText(body.email, 254).toLowerCase();
-    const existingUsers = getPublicUsers();
+    const existingUsers = await getPublicUsers();
     const publicRegistration = process.env.ENABLE_PUBLIC_REGISTRATION === "1";
     if (!publicRegistration && (existingUsers.length > 0 || email !== GLOBAL_ADMIN_EMAIL)) {
       return Response.json({ ok: false, error: "Registration is closed. Ask an admin to grant access." }, { status: 403 });
     }
-    const user = createLocalUser({
+    const user = await createLocalUser({
       email,
       password: body.password ?? "",
       name: safeText(body.name, 120),

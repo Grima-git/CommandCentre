@@ -39,20 +39,12 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             const email = typeof credentials?.email === "string" ? credentials.email : "";
             const password = typeof credentials?.password === "string" ? credentials.password : "";
             if (email && password) {
-              const localUser = authenticateLocalUser(email, password);
+              const localUser = await authenticateLocalUser(email, password);
               if (!localUser) return null;
-              return {
-                id: localUser.email,
-                email: localUser.email,
-                name: localUser.name,
-              };
+              return { id: localUser.email, email: localUser.email, name: localUser.name };
             }
             if (!allowDevLogin) return null;
-            return {
-              id: DEV_USER.email,
-              email: DEV_USER.email,
-              name: DEV_USER.name,
-            };
+            return { id: DEV_USER.email, email: DEV_USER.email, name: DEV_USER.name };
           },
         }),
       ]
@@ -68,13 +60,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             const email = typeof credentials?.email === "string" ? credentials.email : "";
             const password = typeof credentials?.password === "string" ? credentials.password : "";
             if (!email || !password) return null;
-            const localUser = authenticateLocalUser(email, password);
+            const localUser = await authenticateLocalUser(email, password);
             if (!localUser) return null;
-            return {
-              id: localUser.email,
-              email: localUser.email,
-              name: localUser.name,
-            };
+            return { id: localUser.email, email: localUser.email, name: localUser.name };
           },
         }),
         ...(process.env.AUTH_MICROSOFT_ENTRA_ID_ID
@@ -99,28 +87,27 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       if (account?.provider === "microsoft-entra-id") {
         token.msAccessToken = account.access_token;
         token.msRefreshToken = account.refresh_token;
-        token.msExpiresAt = account.expires_at; // unix seconds
+        token.msExpiresAt = account.expires_at;
       }
 
-      // Microsoft-specific sections: anyone who signs in via Microsoft gets these.
       const MS_SECTIONS: SectionId[] = ["email", "calendar", "teams"];
       const isMicrosoftLogin = account?.provider === "microsoft-entra-id";
 
       if (user?.email) {
         const email = user.email.toLowerCase();
         const isGlobalAdmin = email === GLOBAL_ADMIN_EMAIL.toLowerCase();
-        const localUser = findUserByEmail(email);
+        const localUser = await findUserByEmail(email);
         const exec = findExecByEmail(email);
         token.role = exec?.role ?? null;
         token.appRole = isGlobalAdmin ? "global_admin" : (localUser?.role ?? "user");
         token.title = localUser?.title ?? exec?.title ?? (isGlobalAdmin ? "Global Admin" : null);
+        // Always use real name — never fall back to a hardcoded exec name
         token.name = localUser?.name ?? user.name ?? token.name;
 
         if (isGlobalAdmin) {
           token.sections = allSectionIds();
         } else {
           const baseSections = localUser?.sections ?? normalizeSections(DEFAULT_USER_SECTIONS, "user");
-          // Microsoft login users automatically get email/calendar/teams
           token.sections = isMicrosoftLogin
             ? Array.from(new Set<SectionId>([...(baseSections as SectionId[]), ...MS_SECTIONS]))
             : baseSections;
@@ -133,7 +120,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           token.sections = allSectionIds();
           token.title = token.title ?? "Global Admin";
         } else {
-          const localUser = findUserByEmail(email);
+          const localUser = await findUserByEmail(email);
           if (localUser) {
             token.appRole = localUser.role;
             token.title = localUser.title;
@@ -189,6 +176,8 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       session.user.appRole = (token.appRole as UserRole | null) ?? "user";
       session.user.title = (token.title as string | null) ?? null;
       session.user.sections = normalizeSections(token.sections, session.user.appRole);
+      // Explicitly carry the real name through — prevents fallback to DEV_USER
+      session.user.name = (token.name as string | null) ?? session.user.name ?? null;
       if (token.msAccessToken) {
         session.user.msAccessToken = token.msAccessToken as string;
       }

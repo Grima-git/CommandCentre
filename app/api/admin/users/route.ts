@@ -19,7 +19,8 @@ export async function GET(req: Request) {
   if (access.response) return access.response;
   const session = access.session;
   if (!isAdmin(session?.user.appRole)) return Response.json({ ok: false, error: "Forbidden" }, { status: 403 });
-  return Response.json({ ok: true, users: getPublicUsers(), sections: allSectionIds() });
+  const users = await getPublicUsers();
+  return Response.json({ ok: true, users, sections: allSectionIds() });
 }
 
 export async function PATCH(req: Request) {
@@ -39,7 +40,7 @@ export async function PATCH(req: Request) {
   if (!email) return Response.json({ ok: false, error: "Email is required" }, { status: 400 });
 
   try {
-    const user = updateLocalUser(email, {
+    const user = await updateLocalUser(email, {
       role: body.role,
       sections: body.sections ? normalizeSections(body.sections, body.role ?? "user") : undefined,
       title: body.title,

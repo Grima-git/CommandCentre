@@ -1,5 +1,4 @@
 import { auth } from "@/lib/auth";
-import { findExecByEmail, DEV_USER } from "@/lib/users";
 import { Sidebar } from "@/components/sidebar";
 import { StatusBar } from "@/components/status-bar";
 import { redirect } from "next/navigation";
@@ -11,21 +10,28 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const session = await auth();
   if (!session?.user) redirect("/login");
 
-  const exec = findExecByEmail(session.user.email) ?? DEV_USER;
   const sections = normalizeSections(session.user.sections, session.user.appRole);
-  const enabledModules = getEnabledModules();
+  const enabledModules = await getEnabledModules();
   const pathname = headers().get("x-pathname") ?? "";
   if (pathname.startsWith("/dashboard") && !canAccessPath(pathname, sections, session.user.appRole)) {
     redirect(firstAccessiblePath(sections));
   }
+
+  // Derive display name from session — never fall back to DEV_USER so the
+  // greeting always shows the actual logged-in person's name.
+  const displayName =
+    session.user.name ??
+    session.user.email?.split("@")[0] ??
+    "User";
+  const displayTitle = session.user.title ?? "Team Member";
 
   return (
     <div className="min-h-screen flex flex-col">
       <div className="flex flex-1 min-h-0">
         <Sidebar
           user={{
-            name: session.user.name ?? exec.name,
-            title: session.user.title ?? exec.title,
+            name: displayName,
+            title: displayTitle,
             role: session.user.appRole,
             sections,
             email: session.user.email ?? "",
