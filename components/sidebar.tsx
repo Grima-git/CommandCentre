@@ -2,24 +2,32 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { signOut } from "next-auth/react";
 import {
   Shield,
-  ChevronDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { SECTIONS, type SectionId, type UserRole } from "@/lib/access-control";
+import { SECTIONS, TOGGLEABLE_MODULES, type SectionId, type UserRole } from "@/lib/access-control";
 
 type NavItem = (typeof SECTIONS)[number];
 
-export function Sidebar({ user }: { user: { name: string; title: string; role: UserRole; sections: SectionId[] } }) {
+export function Sidebar({
+  user,
+  enabledModules,
+}: {
+  user: { name: string; email: string; title: string; role: UserRole; sections: SectionId[] };
+  enabledModules: SectionId[];
+}) {
   const pathname = usePathname();
   const allowed = new Set(user.sections);
+
   const visibleSections = SECTIONS.filter((section) => {
     if (!allowed.has(section.id)) return false;
     if (section.adminOnly && user.role !== "global_admin" && user.role !== "admin") return false;
+    // Hide globally disabled modules (toggleable modules that are switched off)
+    if (TOGGLEABLE_MODULES.includes(section.id) && !enabledModules.includes(section.id)) return false;
     return true;
   });
+
   const topNav = visibleSections.filter((section) => section.placement === "top");
   const bottomNav = visibleSections.filter((section) => section.placement === "bottom");
 
@@ -44,20 +52,23 @@ export function Sidebar({ user }: { user: { name: string; title: string; role: U
       </div>
 
       <div className="p-3 border-t border-bg-line">
-        <button
-          onClick={() => void signOut({ callbackUrl: "/login" })}
-          className="w-full flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-bg-elev transition"
-          title="Sign out"
+        <Link
+          href="/dashboard/account"
+          className={cn(
+            "w-full flex items-center gap-3 px-2 py-2 rounded-lg transition",
+            pathname.startsWith("/dashboard/account")
+              ? "bg-bg-elev border border-bg-line"
+              : "hover:bg-bg-elev",
+          )}
         >
-          <div className="w-8 h-8 rounded-full bg-grad-blue flex items-center justify-center text-xs font-semibold">
+          <div className="w-8 h-8 rounded-full bg-grad-blue flex items-center justify-center text-xs font-semibold shrink-0">
             {user.name.slice(0, 1).toUpperCase()}
           </div>
-          <div className="flex-1 text-left">
-            <div className="text-sm font-medium leading-tight">{user.name}</div>
-            <div className="text-[11px] text-txt-muted leading-tight">{user.title}</div>
+          <div className="flex-1 text-left min-w-0">
+            <div className="text-sm font-medium leading-tight truncate">{user.name}</div>
+            <div className="text-[11px] text-txt-muted leading-tight truncate">{user.title}</div>
           </div>
-          <ChevronDown className="w-4 h-4 text-txt-muted" />
-        </button>
+        </Link>
       </div>
     </aside>
   );

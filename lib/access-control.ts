@@ -8,6 +8,7 @@ import {
   Settings,
   ShieldCheck,
   Sparkles,
+  User,
   Users,
   Users2,
   type LucideIcon,
@@ -25,7 +26,8 @@ export type SectionId =
   | "calendar"
   | "notifications"
   | "settings"
-  | "admin";
+  | "admin"
+  | "account";
 
 export type SectionDefinition = {
   id: SectionId;
@@ -50,9 +52,13 @@ export const SECTIONS: SectionDefinition[] = [
   { id: "admin", label: "Admin", href: "/dashboard/admin", icon: ShieldCheck, placement: "bottom", adminOnly: true },
   { id: "notifications", label: "Notifications", href: "/dashboard/notifications", icon: Bell, placement: "bottom" },
   { id: "settings", label: "Settings", href: "/dashboard/settings", icon: Settings, placement: "bottom" },
+  { id: "account", label: "Account", href: "/dashboard/account", icon: User, placement: "bottom" },
 ];
 
 export const DEFAULT_USER_SECTIONS: SectionId[] = ["home", "renewals", "calls", "hr"];
+
+// Sections that a global admin can toggle on/off app-wide.
+export const TOGGLEABLE_MODULES: SectionId[] = ["renewals", "calls", "hr"];
 
 export function allSectionIds(): SectionId[] {
   return SECTIONS.map((section) => section.id);
@@ -63,10 +69,12 @@ export function normalizeSections(sections: unknown, role: UserRole): SectionId[
   const source = Array.isArray(sections) ? sections : DEFAULT_USER_SECTIONS;
   const result = source.filter((section): section is SectionId => typeof section === "string" && valid.has(section as SectionId));
   const withHome: SectionId[] = result.includes("home") ? result : ["home", ...result];
+  // account is always visible to everyone
+  const withAccount = withHome.includes("account") ? withHome : [...withHome, "account"];
   if (role === "global_admin" || role === "admin") {
-    return Array.from(new Set<SectionId>([...withHome, "admin"]));
+    return Array.from(new Set<SectionId>([...withAccount, "admin"]));
   }
-  return withHome.filter((section) => section !== "admin");
+  return withAccount.filter((section) => section !== "admin");
 }
 
 export function canAccessPath(pathname: string, sections: SectionId[], role: UserRole): boolean {

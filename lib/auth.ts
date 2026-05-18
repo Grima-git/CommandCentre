@@ -3,7 +3,7 @@ import MicrosoftEntraID from "next-auth/providers/microsoft-entra-id";
 import Credentials from "next-auth/providers/credentials";
 import { DEV_USER, findExecByEmail, type ExecRole } from "./users";
 import { authenticateLocalUser, findUserByEmail } from "./local-users";
-import { DEFAULT_USER_SECTIONS, normalizeSections, type SectionId, type UserRole } from "./access-control";
+import { DEFAULT_USER_SECTIONS, GLOBAL_ADMIN_EMAIL, allSectionIds, normalizeSections, type SectionId, type UserRole } from "./access-control";
 
 const isDevBypass = process.env.DEV_AUTH_BYPASS === "1";
 const allowDevLogin = isDevBypass && process.env.NODE_ENV !== "production";
@@ -103,20 +103,32 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       }
 
       if (user?.email) {
-        const localUser = findUserByEmail(user.email);
-        const exec = findExecByEmail(user.email);
+        const email = user.email.toLowerCase();
+        const isGlobalAdmin = email === GLOBAL_ADMIN_EMAIL.toLowerCase();
+        const localUser = findUserByEmail(email);
+        const exec = findExecByEmail(email);
         token.role = exec?.role ?? null;
-        token.appRole = localUser?.role ?? "user";
-        token.title = localUser?.title ?? exec?.title ?? null;
-        token.sections = localUser?.sections ?? normalizeSections(DEFAULT_USER_SECTIONS, "user");
+        token.appRole = isGlobalAdmin ? "global_admin" : (localUser?.role ?? "user");
+        token.title = localUser?.title ?? exec?.title ?? (isGlobalAdmin ? "Global Admin" : null);
+        token.sections = isGlobalAdmin
+          ? allSectionIds()
+          : (localUser?.sections ?? normalizeSections(DEFAULT_USER_SECTIONS, "user"));
         token.name = localUser?.name ?? user.name ?? token.name;
       } else if (token.email) {
-        const localUser = findUserByEmail(String(token.email));
-        if (localUser) {
-          token.appRole = localUser.role;
-          token.title = localUser.title;
-          token.sections = localUser.sections;
-          token.name = localUser.name;
+        const email = String(token.email).toLowerCase();
+        const isGlobalAdmin = email === GLOBAL_ADMIN_EMAIL.toLowerCase();
+        if (isGlobalAdmin) {
+          token.appRole = "global_admin";
+          token.sections = allSectionIds();
+          token.title = token.title ?? "Global Admin";
+        } else {
+          const localUser = findUserByEmail(email);
+          if (localUser) {
+            token.appRole = localUser.role;
+            token.title = localUser.title;
+            token.sections = localUser.sections;
+            token.name = localUser.name;
+          }
         }
       }
 
