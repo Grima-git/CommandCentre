@@ -173,6 +173,44 @@ export async function getTeamsChats(
 }
 
 // ---------------------------------------------------------------------------
+// Chat Messages
+// ---------------------------------------------------------------------------
+
+export type ChatMessage = {
+  id: string;
+  createdDateTime: string;
+  from: {
+    user?: { displayName: string; id: string };
+    application?: { displayName: string };
+  } | null;
+  body: {
+    contentType: "text" | "html";
+    content: string;
+  };
+  messageType: string;
+  deletedDateTime: string | null;
+};
+
+export async function getChatMessages(
+  accessToken: string,
+  chatId: string,
+  top = 50,
+): Promise<ChatMessage[]> {
+  const params = new URLSearchParams({
+    $top: String(top),
+    $orderby: "createdDateTime desc",
+  });
+
+  const data = await graphFetch<{ value: ChatMessage[] }>(
+    accessToken,
+    `/me/chats/${encodeURIComponent(chatId)}/messages?${params.toString()}`,
+  );
+
+  // Reverse so oldest is at top (natural chat order)
+  return data.value.reverse();
+}
+
+// ---------------------------------------------------------------------------
 // Send Mail
 // ---------------------------------------------------------------------------
 
