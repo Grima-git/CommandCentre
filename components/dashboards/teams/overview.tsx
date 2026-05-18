@@ -450,19 +450,24 @@ export default function TeamsOverview({ userName }: { userName: string }) {
                     <div className="flex-1 h-px bg-bg-line" />
                   </div>
 
-                  <div className="space-y-0">
+                  <div className="space-y-0.5">
                     {dayMsgs.map((msg, i) => {
                       const senderName =
                         msg.from?.user?.displayName ??
                         msg.from?.application?.displayName ??
                         "Unknown";
                       const senderId =
-                        msg.from?.user?.id ?? msg.from?.application?.displayName ?? senderName;
+                        msg.from?.user?.id ??
+                        msg.from?.application?.displayName ??
+                        senderName;
                       const content = stripHtml(msg.body.content);
                       if (!content) return null;
 
                       // Group with previous if same sender within 5 minutes
-                      const prev = dayMsgs[i - 1];
+                      const prev = dayMsgs
+                        .slice(0, i)
+                        .reverse()
+                        .find((m) => m.messageType === "message" && !m.deletedDateTime && stripHtml(m.body.content));
                       const prevSenderId =
                         prev?.from?.user?.id ??
                         prev?.from?.application?.displayName ??
@@ -474,42 +479,53 @@ export default function TeamsOverview({ userName }: { userName: string }) {
                       const isContinuation =
                         prevSenderId === senderId && timeDiff < 5 * 60 * 1000;
 
-                      return isContinuation ? (
-                        // Continuation: no avatar, no name — just text aligned under previous
-                        <div key={msg.id} className="flex gap-2.5 group pl-0.5">
-                          {/* Spacer matches avatar width */}
-                          <div className="w-8 shrink-0 flex items-start justify-center pt-1">
-                            <span className="text-[10px] text-txt-muted opacity-0 group-hover:opacity-100 leading-none select-none">
-                              {msgTime(msg.createdDateTime)}
-                            </span>
-                          </div>
-                          <p className="flex-1 min-w-0 text-sm text-txt-secondary whitespace-pre-wrap break-words leading-relaxed pb-0.5">
-                            {content}
-                          </p>
-                        </div>
-                      ) : (
-                        // New sender block: show avatar + name + time
-                        <div key={msg.id} className="flex gap-2.5 pt-3">
-                          <div
-                            className={cn(
-                              "w-8 h-8 rounded-full flex items-center justify-center text-[11px] font-bold text-white shrink-0 mt-0.5",
-                              avatarColour(senderName),
+                      return (
+                        <div
+                          key={msg.id}
+                          className={cn("flex gap-3", isContinuation ? "mt-0.5" : "mt-4")}
+                        >
+                          {/* Avatar column — avatar on first, spacer on continuation */}
+                          <div className="w-9 shrink-0">
+                            {!isContinuation && (
+                              <div
+                                className={cn(
+                                  "w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold text-white",
+                                  avatarColour(senderName),
+                                )}
+                              >
+                                {initials(senderName)}
+                              </div>
                             )}
-                          >
-                            {initials(senderName)}
                           </div>
+
+                          {/* Message content */}
                           <div className="flex-1 min-w-0">
-                            <div className="flex items-baseline gap-2 mb-0.5">
-                              <span className="text-xs font-semibold text-txt-primary">
-                                {senderName}
-                              </span>
-                              <span className="text-[11px] text-txt-muted">
-                                {msgTime(msg.createdDateTime)}
-                              </span>
+                            {/* Name + time header — first message only */}
+                            {!isContinuation && (
+                              <div className="flex items-baseline gap-2 mb-1">
+                                <span className="text-xs font-semibold text-txt-primary">
+                                  {senderName}
+                                </span>
+                                <span className="text-[11px] text-txt-muted">
+                                  {msgTime(msg.createdDateTime)}
+                                </span>
+                              </div>
+                            )}
+
+                            {/* Bubble card */}
+                            <div className="group relative">
+                              <div className="bg-bg-elev rounded-2xl px-4 py-2.5">
+                                <p className="text-sm text-txt-secondary whitespace-pre-wrap break-words leading-relaxed">
+                                  {content}
+                                </p>
+                              </div>
+                              {/* Hover timestamp for continuation messages */}
+                              {isContinuation && (
+                                <span className="absolute -left-14 top-1/2 -translate-y-1/2 text-[10px] text-txt-muted opacity-0 group-hover:opacity-100 transition-opacity select-none pointer-events-none">
+                                  {msgTime(msg.createdDateTime)}
+                                </span>
+                              )}
                             </div>
-                            <p className="text-sm text-txt-secondary whitespace-pre-wrap break-words leading-relaxed">
-                              {content}
-                            </p>
                           </div>
                         </div>
                       );
