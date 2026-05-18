@@ -1,4 +1,10 @@
-import { fetchRenewalsTracker, formatDDMMYYYY, shortLabel } from "@/lib/data/connectors/opengi-soap";
+import {
+  fetchRenewalsTracker,
+  formatDDMMYYYY,
+  parseDDMMYYYY,
+  shortLabel,
+} from "@/lib/data/connectors/opengi-soap";
+import type { RenewalRow } from "@/lib/data/connectors/opengi-soap";
 import { requireApiAccess } from "@/lib/security";
 
 export const dynamic = "force-dynamic";
@@ -51,36 +57,101 @@ export type SummaryResponse = {
   policies: PolicyRow[];
 };
 
-function getDateRange(period: string): [Date, Date] {
-  const now = new Date();
+// ---------------------------------------------------------------------------
+// For large date ranges (month / ytd), chunk into months and fetch in parallel.
+// Each monthly SOAP call is small and fast; parallel execution beats one slow
+// big query that risks the Netlify 26 s timeout.
+// ---------------------------------------------------------------------------
+async function fetchTrackerForPeriod(
+  start: Date,
+  end: Date,
+): Promise<RenewalRow[] | null> {
+  const daysDiff = (end.getTime() - start.getTime()) / 86_400_000;
+
+  // Small ranges: single call, no chunking needed
+  if (daysDiff <= 62) {
+    return fetchRenewalsTracker(start, end);
+  }
+
+  // Build monthly chunks covering [start, end]
+  const chunks: [Date, Date][] = [];
+  const cursor = new Date(start.getFullYear(), start.getMonth(), 1);
+  while (cursor <= end) {
+    const chunkStart = new Date(Math.max(cursor.getTime(), start.getTime()));
+    const lastDay = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0, 23, 59, 59, 999);
+    const chunkEnd = lastDay < end ? lastDay : new Date(end);
+    chunks.push([chunkStart, chunkEnd]);
+    cursor.setMonth(cursor.getMonth() + 1);
+  }
+
+  const results = await Promise.all(chunks.map(([s, e]) => fetchRenewalsTracker(s, e)));
+  if (results.some((r) => r === null)) return null;
+
+  // Deduplicate by policyRef + inceptionDate (advance renewals can appear in
+  // the lookback window AND the main month window)
+  const seen = new Set<string>();
+  const merged: RenewalRow[] = [];
+  for (const chunk of results) {
+    for (const row of chunk!) {
+      const key = `${row.policyRef.trim().toLowerCase()}|${row.inceptionDate}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        merged.push(row);
+      }
+    }
+  }
+  return merged;
+}
+
+// ---------------------------------------------------------------------------
+// Date range helpers
+// ---------------------------------------------------------------------------
+
+type DateWindow = {
+  queryStart: Date; // what we ask the SOAP proc for (may look back for advances)
+  queryEnd: Date;
+  displayStart: Date; // what we show in the UI date label
+  displayEnd: Date;
+};
+
+function getDateWindow(period: string, now: Date): DateWindow {
   const end = new Date(now);
   end.setHours(23, 59, 59, 999);
 
   if (period === "today") {
     const start = new Date(now);
     start.setHours(0, 0, 0, 0);
-    return [start, end];
+    return { queryStart: start, queryEnd: end, displayStart: start, displayEnd: end };
   }
+
   if (period === "week") {
     const start = new Date(now);
     const day = now.getDay();
-    const diffToMon = day === 0 ? -6 : 1 - day;
-    start.setDate(now.getDate() + diffToMon);
+    start.setDate(now.getDate() + (day === 0 ? -6 : 1 - day));
     start.setHours(0, 0, 0, 0);
-    return [start, end];
+    return { queryStart: start, queryEnd: end, displayStart: start, displayEnd: end };
   }
+
   if (period === "month") {
-    const start = new Date(now.getFullYear(), now.getMonth(), 1);
-    return [start, end];
+    const displayStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    // Look back 30 days so advance renewals (processed before month start but
+    // with an inception date this month) are included — matches the pipeline.
+    const queryStart = new Date(displayStart);
+    queryStart.setDate(queryStart.getDate() - 30);
+    return { queryStart, queryEnd: end, displayStart, displayEnd: end };
   }
+
   if (period === "ytd") {
-    const start = new Date(now.getFullYear(), 0, 1);
-    return [start, end];
+    const displayStart = new Date(now.getFullYear(), 0, 1);
+    const queryStart = new Date(displayStart);
+    queryStart.setDate(queryStart.getDate() - 30);
+    return { queryStart, queryEnd: end, displayStart, displayEnd: end };
   }
-  // default: today
+
+  // fallback: today
   const start = new Date(now);
   start.setHours(0, 0, 0, 0);
-  return [start, end];
+  return { queryStart: start, queryEnd: end, displayStart: start, displayEnd: end };
 }
 
 function formatDateRange(start: Date, end: Date): string {
@@ -90,19 +161,54 @@ function formatDateRange(start: Date, end: Date): string {
   return `${fmt(start)} – ${fmt(end)}`;
 }
 
+// For month / ytd we filter the raw rows down to those whose inceptionDate
+// falls within the display window — this is what the pipeline uses too.
+function filterByInceptionDate(
+  rows: RenewalRow[],
+  start: Date,
+  end: Date,
+): RenewalRow[] {
+  const s = new Date(start); s.setHours(0, 0, 0, 0);
+  const e = new Date(end);   e.setHours(23, 59, 59, 999);
+  return rows.filter((r) => {
+    if (!r.inceptionDate) return false;
+    try {
+      const d = parseDDMMYYYY(r.inceptionDate);
+      return d >= s && d <= e;
+    } catch {
+      return false;
+    }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Route handler
+// ---------------------------------------------------------------------------
+
 export async function GET(req: Request) {
-  const access = await requireApiAccess(req, { section: "renewals", limit: { windowMs: 60_000, max: 60 } });
+  const access = await requireApiAccess(req, {
+    section: "renewals",
+    limit: { windowMs: 60_000, max: 60 },
+  });
   if (access.response) return access.response;
 
   const { searchParams } = new URL(req.url);
   const period = searchParams.get("period") ?? "today";
+  const now = new Date();
 
-  const [start, end] = getDateRange(period);
-  const rows = await fetchRenewalsTracker(start, end);
+  const { queryStart, queryEnd, displayStart, displayEnd } = getDateWindow(period, now);
 
-  if (!rows) {
+  const rawRows = await fetchTrackerForPeriod(queryStart, queryEnd);
+  if (!rawRows) {
     return Response.json({ ok: false, error: "Could not reach data source" }, { status: 502 });
   }
+
+  // For month/ytd, narrow to policies whose inception date falls in the display
+  // window — this aligns with the pipeline's "344 renewed in May" count.
+  const rows =
+    period === "month" || period === "ytd"
+      ? filterByInceptionDate(rawRows, displayStart, displayEnd)
+      : rawRows;
 
   const n = rows.length;
   const renewedRows = rows.filter((r) => r.totalPremium > 0 || r.earn > 0);
@@ -113,10 +219,13 @@ export async function GET(req: Request) {
   const totalCommission = rows.reduce((s, r) => s + r.commission, 0);
   const totalFinanceFees = rows.reduce((s, r) => s + r.financeFees, 0);
 
-  // Trend: group by date
+  // Trend: for month/ytd group by inception date; for today/week by processed date
+  const dateField: keyof RenewalRow = period === "month" || period === "ytd" ? "inceptionDate" : "date";
   const trendMap = new Map<string, { policies: number; gwp: number; earn: number }>();
   for (const r of rows) {
-    const label = shortLabel(r.date);
+    const rawDate = (r[dateField] as string) || r.date;
+    if (!rawDate) continue;
+    const label = shortLabel(rawDate);
     const e = trendMap.get(label) ?? { policies: 0, gwp: 0, earn: 0 };
     e.policies++;
     e.gwp += r.totalPremium;
@@ -125,11 +234,19 @@ export async function GET(req: Request) {
   }
   const trend: TrendPoint[] = [...trendMap.entries()]
     .sort((a, b) => {
-      const rowA = rows.find((r) => shortLabel(r.date) === a[0]);
-      const rowB = rows.find((r) => shortLabel(r.date) === b[0]);
+      const rowA = rows.find((r) => {
+        const d = (r[dateField] as string) || r.date;
+        return d && shortLabel(d) === a[0];
+      });
+      const rowB = rows.find((r) => {
+        const d = (r[dateField] as string) || r.date;
+        return d && shortLabel(d) === b[0];
+      });
       if (!rowA || !rowB) return 0;
-      const [da, ma, ya] = rowA.date.split("/");
-      const [db, mb, yb] = rowB.date.split("/");
+      const dA = (rowA[dateField] as string) || rowA.date;
+      const dB = (rowB[dateField] as string) || rowB.date;
+      const [da, ma, ya] = dA.split("/");
+      const [db, mb, yb] = dB.split("/");
       return new Date(+ya, +ma - 1, +da).getTime() - new Date(+yb, +mb - 1, +db).getTime();
     })
     .map(([date, v]) => ({ date, ...v }));
@@ -172,7 +289,7 @@ export async function GET(req: Request) {
   const body: SummaryResponse = {
     ok: true,
     period,
-    dateRange: formatDateRange(start, end),
+    dateRange: formatDateRange(displayStart, displayEnd),
     totalPolicies: n,
     renewedPolicies: renewedN,
     gwp,

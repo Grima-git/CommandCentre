@@ -53,6 +53,8 @@ async function callSoap(storedProc: string, params: string[]): Promise<string | 
       },
       body: soap,
       cache: "no-store",
+      // Abort cleanly at 22 s — well within Netlify's 26 s function limit.
+      signal: AbortSignal.timeout(22_000),
     });
     if (!res.ok) return null;
     return res.text();
