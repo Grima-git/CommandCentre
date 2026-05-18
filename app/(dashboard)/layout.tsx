@@ -11,7 +11,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
   if (!session?.user) redirect("/login");
 
   const sections = normalizeSections(session.user.sections, session.user.appRole);
-  const enabledModules = await getEnabledModules();
+  // Fallback to all modules enabled if DB is unavailable — never crash the layout.
+  const enabledModules = await getEnabledModules().catch(() => [
+    "renewals", "calls", "hr", "email", "calendar", "teams",
+  ] as const);
   const pathname = headers().get("x-pathname") ?? "";
   if (pathname.startsWith("/dashboard") && !canAccessPath(pathname, sections, session.user.appRole)) {
     redirect(firstAccessiblePath(sections));

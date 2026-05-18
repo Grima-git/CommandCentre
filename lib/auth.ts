@@ -96,7 +96,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       if (user?.email) {
         const email = user.email.toLowerCase();
         const isGlobalAdmin = email === GLOBAL_ADMIN_EMAIL.toLowerCase();
-        const localUser = await findUserByEmail(email);
+        const localUser = await findUserByEmail(email).catch(() => null);
         const exec = findExecByEmail(email);
         token.role = exec?.role ?? null;
         token.appRole = isGlobalAdmin ? "global_admin" : (localUser?.role ?? "user");
@@ -120,7 +120,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           token.sections = allSectionIds();
           token.title = token.title ?? "Global Admin";
         } else {
-          const localUser = await findUserByEmail(email);
+          const localUser = await findUserByEmail(email).catch(() => null);
           if (localUser) {
             token.appRole = localUser.role;
             token.title = localUser.title;
