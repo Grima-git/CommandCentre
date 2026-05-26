@@ -5,6 +5,7 @@ import {
 } from "@/lib/data/connectors/opengi-soap";
 import type { RenewalDueRow, RenewalRow } from "@/lib/data/connectors/opengi-soap";
 import { requireApiAccess } from "@/lib/security";
+import { getCached } from "@/lib/server-cache";
 
 export const dynamic = "force-dynamic";
 
@@ -113,8 +114,16 @@ export async function GET(req: Request) {
   trackerStart.setDate(trackerStart.getDate() - 30);
 
   const [dueRows, trackerRows] = await Promise.all([
-    fetchRenewalsDue(dueStart, dueEnd),
-    fetchRenewalsTracker(trackerStart, dueEnd),
+    getCached(
+      `renewals:monthly:due:${dueStart.toISOString()}:${dueEnd.toISOString()}`,
+      180_000,
+      () => fetchRenewalsDue(dueStart, dueEnd),
+    ),
+    getCached(
+      `renewals:monthly:tracker:${trackerStart.toISOString()}:${dueEnd.toISOString()}`,
+      180_000,
+      () => fetchRenewalsTracker(trackerStart, dueEnd),
+    ),
   ]);
 
   if (!dueRows || !trackerRows) {

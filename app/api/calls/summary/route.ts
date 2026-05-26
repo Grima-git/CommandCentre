@@ -1,5 +1,6 @@
 import { fetchCallRecords, isPbxConfigured } from "@/lib/data/connectors/pbx-api";
 import { requireApiAccess } from "@/lib/security";
+import { cacheTtlForPeriod, getCached } from "@/lib/server-cache";
 
 export const dynamic = "force-dynamic";
 
@@ -100,7 +101,11 @@ export async function GET(req: Request) {
     return Response.json(mock);
   }
 
-  const rows = await fetchCallRecords(start, end);
+  const rows = await getCached(
+    `calls:summary:${period}:${start.toISOString()}:${end.toISOString()}`,
+    cacheTtlForPeriod(period),
+    () => fetchCallRecords(start, end),
+  );
   if (!rows) {
     return Response.json({ ok: false, error: "Could not reach PBX" }, { status: 502 });
   }

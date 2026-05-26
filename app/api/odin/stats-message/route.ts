@@ -2,6 +2,7 @@ import { findContactByName } from "@/lib/contacts";
 import { fetchRenewalsTracker } from "@/lib/data/connectors/opengi-soap";
 import { fetchCallRecords, isPbxConfigured } from "@/lib/data/connectors/pbx-api";
 import { requireApiAccess, safeText } from "@/lib/security";
+import { cacheTtlForPeriod, getCached } from "@/lib/server-cache";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -67,7 +68,11 @@ function fmtSec(s: number): string {
 
 async function buildRenewalsMessage(period: StatsPeriod): Promise<string | null> {
   const [start, end] = getDateRange(period);
-  const rows = await fetchRenewalsTracker(start, end);
+  const rows = await getCached(
+    `odin:stats:renewals:${period}:${start.toISOString()}:${end.toISOString()}`,
+    cacheTtlForPeriod(period),
+    () => fetchRenewalsTracker(start, end),
+  );
   if (!rows) return null;
 
   const renewedRows = rows.filter((row) => row.totalPremium > 0 || row.earn > 0);
@@ -84,7 +89,11 @@ async function buildCallsMessage(period: StatsPeriod): Promise<string | null> {
   const [start, end] = getDateRange(period);
   if (!isPbxConfigured()) return "Call stats are not available because PBX is not configured.";
 
-  const rows = await fetchCallRecords(start, end);
+  const rows = await getCached(
+    `odin:stats:calls:${period}:${start.toISOString()}:${end.toISOString()}`,
+    cacheTtlForPeriod(period),
+    () => fetchCallRecords(start, end),
+  );
   if (!rows) return null;
 
   const calls = rows.filter((row) => row.queueName === QUEUE);

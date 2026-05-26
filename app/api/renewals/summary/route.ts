@@ -6,6 +6,7 @@ import {
 } from "@/lib/data/connectors/opengi-soap";
 import type { RenewalRow } from "@/lib/data/connectors/opengi-soap";
 import { requireApiAccess } from "@/lib/security";
+import { cacheTtlForPeriod, getCached } from "@/lib/server-cache";
 
 export const dynamic = "force-dynamic";
 
@@ -198,7 +199,11 @@ export async function GET(req: Request) {
 
   const { queryStart, queryEnd, displayStart, displayEnd } = getDateWindow(period, now);
 
-  const rawRows = await fetchTrackerForPeriod(queryStart, queryEnd);
+  const rawRows = await getCached(
+    `renewals:summary:tracker:${period}:${formatDDMMYYYY(queryStart)}:${formatDDMMYYYY(queryEnd)}`,
+    cacheTtlForPeriod(period),
+    () => fetchTrackerForPeriod(queryStart, queryEnd),
+  );
   if (!rawRows) {
     return Response.json({ ok: false, error: "Could not reach data source" }, { status: 502 });
   }

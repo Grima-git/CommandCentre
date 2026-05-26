@@ -7,6 +7,7 @@ import {
   type SageLeaveEntry,
 } from "@/lib/data/connectors/sage-hr";
 import { requireApiAccess } from "@/lib/security";
+import { getCached } from "@/lib/server-cache";
 
 export const dynamic = "force-dynamic";
 
@@ -144,10 +145,11 @@ export async function GET(req: Request) {
   const now = new Date();
   if (!isSageHrConfigured()) return Response.json(makeMock(now));
 
+  const dateKey = now.toISOString().slice(0, 10);
   const [sageEmployees, leaveRequests, outOfOffice] = await Promise.all([
-    fetchSageEmployees(),
-    fetchSageLeaveRequests(),
-    fetchSageOutOfOffice(now),
+    getCached("hr:employees", 300_000, () => fetchSageEmployees()),
+    getCached("hr:leave-requests", 180_000, () => fetchSageLeaveRequests()),
+    getCached(`hr:out-of-office:${dateKey}`, 120_000, () => fetchSageOutOfOffice(now)),
   ]);
 
   if (!sageEmployees || !leaveRequests || !outOfOffice) {
