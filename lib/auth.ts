@@ -7,6 +7,11 @@ import { DEFAULT_USER_SECTIONS, GLOBAL_ADMIN_EMAIL, allSectionIds, normalizeSect
 
 const isDevBypass = process.env.DEV_AUTH_BYPASS === "1";
 const allowDevLogin = isDevBypass && process.env.NODE_ENV !== "production";
+const hasMicrosoftEntraConfig = Boolean(
+  process.env.AUTH_MICROSOFT_ENTRA_ID_ID &&
+    process.env.AUTH_MICROSOFT_ENTRA_ID_SECRET &&
+    process.env.AUTH_MICROSOFT_ENTRA_ID_ISSUER,
+);
 
 declare module "next-auth" {
   interface Session {
@@ -65,7 +70,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             return { id: localUser.email, email: localUser.email, name: localUser.name };
           },
         }),
-        ...(process.env.AUTH_MICROSOFT_ENTRA_ID_ID
+        ...(hasMicrosoftEntraConfig
           ? [
               MicrosoftEntraID({
                 clientId: process.env.AUTH_MICROSOFT_ENTRA_ID_ID,
