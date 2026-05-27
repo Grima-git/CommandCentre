@@ -7,11 +7,59 @@ import { DEFAULT_USER_SECTIONS, GLOBAL_ADMIN_EMAIL, allSectionIds, normalizeSect
 
 const isDevBypass = process.env.DEV_AUTH_BYPASS === "1";
 const allowDevLogin = isDevBypass && process.env.NODE_ENV !== "production";
-const hasMicrosoftEntraConfig = Boolean(
-  process.env.AUTH_MICROSOFT_ENTRA_ID_ID &&
-    process.env.AUTH_MICROSOFT_ENTRA_ID_SECRET &&
-    process.env.AUTH_MICROSOFT_ENTRA_ID_ISSUER,
+const MICROSOFT_SCOPES =
+  "openid profile email offline_access User.Read Mail.Read Mail.Send Calendars.Read Chat.Read Presence.Read";
+
+type EntraProviderConfig = {
+  id: string;
+  name: string;
+  clientId?: string;
+  clientSecret?: string;
+  issuer?: string;
+  company: "myfirst" | "arma";
+  allowedDomains: string[];
+};
+
+const parseDomains = (value?: string) =>
+  (value ?? "")
+    .split(",")
+    .map((domain) => domain.trim().toLowerCase())
+    .filter(Boolean);
+
+type ReadyEntraProviderConfig = EntraProviderConfig & {
+  clientId: string;
+  clientSecret: string;
+  issuer: string;
+};
+
+const allEntraProviderConfigs: EntraProviderConfig[] = [
+  {
+    id: "microsoft-entra-id",
+    name: "MyFirst Microsoft",
+    clientId: process.env.AUTH_MICROSOFT_ENTRA_ID_ID,
+    clientSecret: process.env.AUTH_MICROSOFT_ENTRA_ID_SECRET,
+    issuer: process.env.AUTH_MICROSOFT_ENTRA_ID_ISSUER,
+    company: "myfirst",
+    allowedDomains: parseDomains(process.env.AUTH_MICROSOFT_ENTRA_ALLOWED_DOMAINS),
+  },
+  {
+    id: "arma-microsoft-entra-id",
+    name: "ARMA Microsoft",
+    clientId: process.env.AUTH_ARMA_ENTRA_ID,
+    clientSecret: process.env.AUTH_ARMA_ENTRA_SECRET,
+    issuer: process.env.AUTH_ARMA_ENTRA_ISSUER,
+    company: "arma",
+    allowedDomains: parseDomains(process.env.AUTH_ARMA_ALLOWED_DOMAINS),
+  },
+];
+
+const entraProviderConfigs = allEntraProviderConfigs.filter(
+  (config): config is ReadyEntraProviderConfig =>
+    Boolean(config.clientId && config.clientSecret && config.issuer),
 );
+
+const getEntraConfig = (providerId?: string | null) =>
+  entraProviderConfigs.find((config) => config.id === providerId);
 
 declare module "next-auth" {
   interface Session {
@@ -70,23 +118,31 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
             return { id: localUser.email, email: localUser.email, name: localUser.name };
           },
         }),
-        ...(hasMicrosoftEntraConfig
-          ? [
-              MicrosoftEntraID({
-                clientId: process.env.AUTH_MICROSOFT_ENTRA_ID_ID,
-                clientSecret: process.env.AUTH_MICROSOFT_ENTRA_ID_SECRET,
-                issuer: process.env.AUTH_MICROSOFT_ENTRA_ID_ISSUER,
-                authorization: {
-                  params: {
-                    scope:
-                      "openid profile email offline_access User.Read Mail.Read Mail.Send Calendars.Read Chat.Read Presence.Read",
-                  },
-                },
-              }),
-            ]
-          : []),
+        ...entraProviderConfigs.map((config) =>
+          MicrosoftEntraID({
+            id: config.id,
+            name: config.name,
+            clientId: config.clientId,
+            clientSecret: config.clientSecret,
+            issuer: config.issuer,
+            authorization: {
+              params: {
+                scope: MICROSOFT_SCOPES,
+              },
+            },
+          }),
+        ),
       ],
   callbacks: {
+    async signIn({ user, account }) {
+      const config = getEntraConfig(account?.provider);
+      if (!config || config.allowedDomains.length === 0) return true;
+
+      const email = user.email?.toLowerCase();
+      if (!email) return false;
+      const domain = email.split("@")[1] ?? "";
+      return config.allowedDomains.includes(domain);
+    },
     async jwt({ token, user, account }) {
       // On initial sign-in (account is only present on first login),
       // upsert the user into cc_users so the admin panel shows them.
@@ -98,14 +154,17 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       }
 
       // On initial Microsoft sign-in, store the Graph access token.
-      if (account?.provider === "microsoft-entra-id") {
-        token.msAccessToken = account.access_token;
-        token.msRefreshToken = account.refresh_token;
-        token.msExpiresAt = account.expires_at;
+      const entraConfig = getEntraConfig(account?.provider);
+      if (entraConfig) {
+        token.msAccessToken = account?.access_token;
+        token.msRefreshToken = account?.refresh_token;
+        token.msExpiresAt = account?.expires_at;
+        token.msProvider = account?.provider;
+        token.company = entraConfig.company;
       }
 
       const MS_SECTIONS: SectionId[] = ["email", "calendar", "teams"];
-      const isMicrosoftLogin = account?.provider === "microsoft-entra-id";
+      const isMicrosoftLogin = Boolean(entraConfig);
 
       if (user?.email) {
         const email = user.email.toLowerCase();
@@ -151,20 +210,20 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         Date.now() > (token.msExpiresAt as number) * 1000 - 60_000
       ) {
         try {
-          const tenantId =
-            process.env.AUTH_MICROSOFT_ENTRA_ID_ISSUER?.split("/")[3] ?? "common";
+          const refreshConfig = getEntraConfig(String(token.msProvider ?? "microsoft-entra-id"));
+          if (!refreshConfig) return token;
+          const tenantId = refreshConfig.issuer?.split("/")[3] ?? "common";
           const refreshRes = await fetch(
             `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`,
             {
               method: "POST",
               headers: { "Content-Type": "application/x-www-form-urlencoded" },
               body: new URLSearchParams({
-                client_id: process.env.AUTH_MICROSOFT_ENTRA_ID_ID ?? "",
-                client_secret: process.env.AUTH_MICROSOFT_ENTRA_ID_SECRET ?? "",
+                client_id: refreshConfig.clientId ?? "",
+                client_secret: refreshConfig.clientSecret ?? "",
                 refresh_token: String(token.msRefreshToken),
                 grant_type: "refresh_token",
-                scope:
-                  "openid profile email offline_access User.Read Mail.Read Mail.Send Calendars.Read Chat.Read Presence.Read",
+                scope: MICROSOFT_SCOPES,
               }),
             },
           );

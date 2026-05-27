@@ -4,7 +4,18 @@ import { useState, useTransition } from "react";
 import { signIn } from "next-auth/react";
 import { Shield } from "lucide-react";
 
-export function LoginPanel({ callbackUrl }: { callbackUrl: string }) {
+type MicrosoftLoginProvider = {
+  id: string;
+  label: string;
+};
+
+export function LoginPanel({
+  callbackUrl,
+  microsoftProviders,
+}: {
+  callbackUrl: string;
+  microsoftProviders: MicrosoftLoginProvider[];
+}) {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -113,26 +124,31 @@ export function LoginPanel({ callbackUrl }: { callbackUrl: string }) {
           </button>
         </form>
 
-        {mode === "login" && (
+        {mode === "login" && microsoftProviders.length > 0 && (
           <>
             <div className="flex items-center gap-3 my-5">
               <div className="flex-1 h-px bg-bg-line" />
               <span className="text-xs text-txt-muted">or</span>
               <div className="flex-1 h-px bg-bg-line" />
             </div>
-            <button
-              type="button"
-              onClick={() => signIn("microsoft-entra-id", { callbackUrl })}
-              className="w-full flex items-center justify-center gap-3 rounded-lg border border-bg-line bg-bg-elev px-4 py-3 text-sm font-semibold text-txt-primary transition hover:bg-bg-card"
-            >
-              <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 21 21" fill="none">
-                <rect x="1" y="1" width="9" height="9" fill="#f25022" />
-                <rect x="11" y="1" width="9" height="9" fill="#7fba00" />
-                <rect x="1" y="11" width="9" height="9" fill="#00a4ef" />
-                <rect x="11" y="11" width="9" height="9" fill="#ffb900" />
-              </svg>
-              Sign in with Microsoft
-            </button>
+            <div className="space-y-3">
+              {microsoftProviders.map((provider) => (
+                <button
+                  key={provider.id}
+                  type="button"
+                  onClick={() => signIn(provider.id, { callbackUrl })}
+                  className="w-full flex items-center justify-center gap-3 rounded-lg border border-bg-line bg-bg-elev px-4 py-3 text-sm font-semibold text-txt-primary transition hover:bg-bg-card"
+                >
+                  <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 21 21" fill="none">
+                    <rect x="1" y="1" width="9" height="9" fill="#f25022" />
+                    <rect x="11" y="1" width="9" height="9" fill="#7fba00" />
+                    <rect x="1" y="11" width="9" height="9" fill="#00a4ef" />
+                    <rect x="11" y="11" width="9" height="9" fill="#ffb900" />
+                  </svg>
+                  {provider.label}
+                </button>
+              ))}
+            </div>
           </>
         )}
 
