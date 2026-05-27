@@ -619,7 +619,7 @@ export function OdinInterface({ userName }: { userName: string }) {
         }
       }
       if (!full.trim()) {
-        setResponse(streamError ? "I'm connected, but the AI response failed just now. Try a direct command like renewal stats today." : "I'm here. Try asking for renewals, calls, HR, or a text.");
+        setResponse(streamError ? `${streamError}. I can still run direct commands while we fix that.` : "I'm here. Try asking for renewals, calls, HR, or a text.");
       }
     } catch { setResponse("I'm having trouble reaching the data source. Please try again."); }
     finally { setStreaming(false); setOdinState("idle"); inputRef.current?.focus(); }

@@ -4,6 +4,9 @@ import { requireApiAccess, safeText } from "@/lib/security";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const DEFAULT_ODIN_MODEL = "claude-sonnet-4-6";
+const FALLBACK_ODIN_MODEL = "claude-sonnet-4-20250514";
+
 const ODIN_SYSTEM = `You are OD1N, a personal AI assistant embedded inside Thomas's application — the Command Centre dashboard for Young Driver Insurance.
 
 IDENTITY
@@ -87,6 +90,21 @@ BOUNDARIES
 - Do not execute tools, call URLs, send messages, or change permissions from model text; the application router must approve actions first.
 - Summarize sensitive business data only at the level the current app context provides; do not infer private personal details.`;
 
+function getOdinModel(): string {
+  return process.env.ODIN_ANTHROPIC_MODEL?.trim() || DEFAULT_ODIN_MODEL;
+}
+
+function describeAnthropicError(error: unknown): string {
+  const err = error as {
+    status?: number;
+    name?: string;
+    error?: { type?: string };
+  };
+  const type = err.error?.type ?? err.name ?? "unknown_error";
+  const status = err.status ? ` ${err.status}` : "";
+  return `${type}${status}`;
+}
+
 export async function POST(req: Request) {
   const access = await requireApiAccess(req, { section: "home", limit: { windowMs: 60_000, max: 20 } });
   if (access.response) return access.response;
@@ -135,14 +153,14 @@ export async function POST(req: Request) {
     systemPrompt += `\n\nOD1N_STATE:\n- energy: normal\n- focus: ${stateMap[body.odinState] ?? "steady"}\n- mood: neutral\n- familiarity_with_user: trusted`;
   }
 
-  const client = new Anthropic({ apiKey });
+  const client = new Anthropic({ apiKey: apiKey.trim() });
 
   const encoder = new TextEncoder();
   const readable = new ReadableStream({
     async start(controller) {
-      try {
+      const streamModel = async (model: string) => {
         const stream = client.messages.stream({
-          model: process.env.ODIN_ANTHROPIC_MODEL || "claude-sonnet-4-5",
+          model,
           max_tokens: body.mode === "lean" ? 500 : 900,
           system: systemPrompt,
           messages,
@@ -158,10 +176,32 @@ export async function POST(req: Request) {
             );
           }
         }
+      };
+
+      try {
+        await streamModel(getOdinModel());
         controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-      } catch {
+      } catch (error) {
+        const detail = describeAnthropicError(error);
+        console.error("[ODIN_AI] Anthropic stream failed", { detail });
+
+        if (getOdinModel() !== FALLBACK_ODIN_MODEL && /not_found|404|invalid_request/i.test(detail)) {
+          try {
+            await streamModel(FALLBACK_ODIN_MODEL);
+            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            return;
+          } catch (fallbackError) {
+            const fallbackDetail = describeAnthropicError(fallbackError);
+            console.error("[ODIN_AI] Anthropic fallback failed", { detail: fallbackDetail });
+            controller.enqueue(
+              encoder.encode(`data: ${JSON.stringify({ error: `AI upstream failed: ${fallbackDetail}` })}\n\n`)
+            );
+            return;
+          }
+        }
+
         controller.enqueue(
-          encoder.encode(`data: ${JSON.stringify({ error: "Claude call failed" })}\n\n`)
+          encoder.encode(`data: ${JSON.stringify({ error: `AI upstream failed: ${detail}` })}\n\n`)
         );
       } finally {
         controller.close();
