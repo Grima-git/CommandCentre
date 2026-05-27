@@ -6,6 +6,7 @@ export const dynamic = "force-dynamic";
 
 const DEFAULT_ODIN_MODEL = "claude-sonnet-4-6";
 const FALLBACK_ODIN_MODEL = "claude-sonnet-4-20250514";
+const DEFAULT_OPENAI_MODEL = "gpt-5.1";
 
 const ODIN_SYSTEM = `You are OD1N, a personal AI assistant embedded inside Thomas's application — the Command Centre dashboard for Young Driver Insurance.
 
@@ -117,6 +118,30 @@ function getAnthropicApiKeys(): Array<{ key: string; source: string }> {
     .filter((candidate) => candidate.key.startsWith("sk-ant-"));
 }
 
+function cleanOpenAiKey(value: string): string {
+  const cleaned = value
+    .trim()
+    .replace(/^["']|["']$/g, "")
+    .replace(/^(?:GPT_API_KEY|OPENAI_API_KEY)=/i, "")
+    .replace(/^Bearer\s+/i, "")
+    .replace(/\s+/g, "")
+    .trim();
+  return cleaned.match(/sk-[A-Za-z0-9._-]+/)?.[0] ?? cleaned;
+}
+
+function getOpenAiApiKey(): { key: string; source: string } | null {
+  const candidates = [
+    ["GPT_API_KEY", process.env.GPT_API_KEY],
+    ["OPENAI_API_KEY", process.env.OPENAI_API_KEY],
+  ] as const;
+
+  for (const [source, value] of candidates) {
+    const key = cleanOpenAiKey(value ?? "");
+    if (key.startsWith("sk-")) return { key, source };
+  }
+  return null;
+}
+
 function describeAnthropicError(error: unknown): string {
   const err = error as {
     status?: number;
@@ -136,14 +161,30 @@ function isModelError(detail: string): boolean {
   return /not_found|404|invalid_request/i.test(detail);
 }
 
+function readOpenAiText(json: unknown): string {
+  const response = json as {
+    output_text?: unknown;
+    output?: Array<{ content?: Array<{ text?: unknown }> }>;
+  };
+  if (typeof response.output_text === "string") return response.output_text;
+  return (
+    response.output
+      ?.flatMap((item) => item.content ?? [])
+      .map((content) => (typeof content.text === "string" ? content.text : ""))
+      .join("")
+      .trim() ?? ""
+  );
+}
+
 export async function POST(req: Request) {
   const access = await requireApiAccess(req, { section: "home", limit: { windowMs: 60_000, max: 20 } });
   if (access.response) return access.response;
 
+  const openAiKey = getOpenAiApiKey();
   const apiKeys = getAnthropicApiKeys();
-  if (apiKeys.length === 0) {
+  if (!openAiKey && apiKeys.length === 0) {
 
-    return new Response(JSON.stringify({ error: "ANTHROPIC_API_KEY not configured" }), {
+    return new Response(JSON.stringify({ error: "AI API key not configured" }), {
       status: 500,
       headers: { "Content-Type": "application/json" },
     });
@@ -187,6 +228,35 @@ export async function POST(req: Request) {
   const encoder = new TextEncoder();
   const readable = new ReadableStream({
     async start(controller) {
+      const streamOpenAi = async (key: string) => {
+        const res = await fetch("https://api.openai.com/v1/responses", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${key}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: process.env.OPENAI_ODIN_MODEL || DEFAULT_OPENAI_MODEL,
+            instructions: systemPrompt,
+            input: messages.map((message) => ({
+              role: message.role,
+              content: [{ type: "input_text", text: String(message.content) }],
+            })),
+            max_output_tokens: body.mode === "lean" ? 500 : 900,
+          }),
+        });
+
+        const json = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          const error = json as { error?: { type?: string; code?: string } };
+          throw new Error(error.error?.type || error.error?.code || `OpenAI ${res.status}`);
+        }
+
+        const text = readOpenAiText(json);
+        if (!text) throw new Error("OpenAI empty response");
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text })}\n\n`));
+      };
+
       const streamModel = async (key: string, model: string) => {
         const client = new Anthropic({ apiKey: key });
         const stream = client.messages.stream({
@@ -213,6 +283,19 @@ export async function POST(req: Request) {
       let completed = false;
 
       try {
+        if (openAiKey) {
+          finalSource = openAiKey.source;
+          try {
+            await streamOpenAi(openAiKey.key);
+            completed = true;
+            controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            return;
+          } catch (error) {
+            finalError = error instanceof Error ? error.message : "OpenAI failed";
+            console.error("[ODIN_AI] OpenAI response failed", { detail: finalError, source: openAiKey.source });
+          }
+        }
+
         for (const candidate of apiKeys) {
           finalSource = candidate.source;
           try {
