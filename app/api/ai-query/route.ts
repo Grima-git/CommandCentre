@@ -95,7 +95,7 @@ function getOdinModel(): string {
 }
 
 function getAnthropicApiKey(): string {
-  const raw = process.env.YDI_ANTHROPIC_KEY || process.env.ANTHROPIC_API_KEY || "";
+  const raw = process.env.YDI_ANTHROPIC_KEY || process.env.ANTHROPIC_API_KEY || process.env.ANTH_API_KEY || "";
   return raw.trim().replace(/^["']|["']$/g, "");
 }
 
