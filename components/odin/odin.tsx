@@ -600,6 +600,7 @@ export function OdinInterface({ userName }: { userName: string }) {
       setOdinState("speaking");
       const reader = res.body.getReader(), decoder = new TextDecoder();
       let buffer = "", full = "";
+      let streamError = "";
       while (true) {
         const { done, value } = await reader.read(); if (done) break;
         buffer += decoder.decode(value, { stream: true });
@@ -607,8 +608,18 @@ export function OdinInterface({ userName }: { userName: string }) {
         for (const line of lines) {
           if (!line.startsWith("data: ")) continue;
           const payload = line.slice(6); if (payload === "[DONE]") break;
-          try { const { text: t } = JSON.parse(payload); if (t) { full += t; setResponse(full); } } catch { /* skip */ }
+          try {
+            const { text: t, error } = JSON.parse(payload) as { text?: string; error?: string };
+            if (t) {
+              full += t;
+              setResponse(full);
+            }
+            if (error) streamError = error;
+          } catch { /* skip */ }
         }
+      }
+      if (!full.trim()) {
+        setResponse(streamError ? "I'm connected, but the AI response failed just now. Try a direct command like renewal stats today." : "I'm here. Try asking for renewals, calls, HR, or a text.");
       }
     } catch { setResponse("I'm having trouble reaching the data source. Please try again."); }
     finally { setStreaming(false); setOdinState("idle"); inputRef.current?.focus(); }

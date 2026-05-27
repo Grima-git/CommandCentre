@@ -168,6 +168,13 @@ function parseAnswerIntent(text: string): OdinCommand | null {
   if (/\b(?:help|what can you do|commands|capabilities)\b/.test(lower)) {
     return { type: "answer_intent", kind: "help", period, confidence: "high" };
   }
+  if (/^(?:hello|hi|hey|yo|morning|afternoon|evening)(?:\s+od(?:i|1)n)?[.!?\s]*$/i.test(lower)) {
+    return {
+      type: "clarify",
+      prompt:
+        "Hello. I'm here. Ask me for renewals, calls, HR, or tell me who to text. Try: renewal stats today, who is off today, or text Thomas hello.",
+    };
+  }
   if (RENEWAL_RE.test(lower) && /\b(?:stat|stats|summary|figures|numbers|performance|doing|how are|today|week|month|ytd)\b/.test(lower)) {
     return { type: "answer_intent", kind: "renewals", period, confidence: "high" };
   }
