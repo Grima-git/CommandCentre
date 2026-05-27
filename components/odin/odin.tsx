@@ -367,6 +367,8 @@ export function OdinInterface({ userName }: { userName: string }) {
   const speakingRef = useRef(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioUnlockedRef = useRef(false);
+  const openAiVoiceFailedRef = useRef(false);
+  const openAiVoiceDisabledRef = useRef(false);
   const piperFailedRef = useRef(false);
   const piperDisabledRef = useRef(false);
 
@@ -814,6 +816,40 @@ export function OdinInterface({ userName }: { userName: string }) {
     }
   }
 
+  async function playOpenAiSpeech(text: string): Promise<boolean> {
+    if (openAiVoiceFailedRef.current || openAiVoiceDisabledRef.current) return false;
+    try {
+      setVoiceEngine("OpenAI voice");
+      const res = await fetch("/api/tts/openai", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      if (!res.ok) {
+        if (res.status === 401 || res.status === 403 || res.status === 503 || res.status === 404) {
+          openAiVoiceDisabledRef.current = true;
+        }
+        throw new Error("OpenAI voice unavailable");
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audioRef.current = audio;
+      setOdinState("speaking");
+      await new Promise<void>((resolve, reject) => {
+        audio.onended = () => resolve();
+        audio.onerror = () => reject(new Error("Audio playback failed"));
+        void audio.play();
+      });
+      URL.revokeObjectURL(url);
+      return true;
+    } catch {
+      openAiVoiceFailedRef.current = true;
+      setVoiceEngine("Piper fallback");
+      return false;
+    }
+  }
+
   function speakWithBrowserVoice(text: string) {
     setVoiceEngine("Browser fallback");
     if (!window.speechSynthesis) {
@@ -849,17 +885,26 @@ export function OdinInterface({ userName }: { userName: string }) {
     }
 
     speakingRef.current = true;
-    if (piperDisabledRef.current) {
-      speakWithBrowserVoice(next);
-      return;
-    }
-    void playPiperSpeech(next).then((played) => {
+    void playOpenAiSpeech(next).then((played) => {
       if (played) {
         speakingRef.current = false;
         window.setTimeout(speakQueuedSpeech, humanPauseMs(next));
         return;
       }
-      speakWithBrowserVoice(next);
+
+      if (piperDisabledRef.current) {
+        speakWithBrowserVoice(next);
+        return;
+      }
+
+      void playPiperSpeech(next).then((piperPlayed) => {
+        if (piperPlayed) {
+          speakingRef.current = false;
+          window.setTimeout(speakQueuedSpeech, humanPauseMs(next));
+          return;
+        }
+        speakWithBrowserVoice(next);
+      });
     });
   }
 
