@@ -94,9 +94,26 @@ function getOdinModel(): string {
   return process.env.ODIN_ANTHROPIC_MODEL?.trim() || DEFAULT_ODIN_MODEL;
 }
 
-function getAnthropicApiKey(): string {
-  const raw = process.env.YDI_ANTHROPIC_KEY || process.env.ANTHROPIC_API_KEY || process.env.ANTH_API_KEY || "";
-  return raw.trim().replace(/^["']|["']$/g, "");
+function cleanApiKey(value: string): string {
+  return value
+    .trim()
+    .replace(/^["']|["']$/g, "")
+    .replace(/^(?:YDI_ANTHROPIC_KEY|ANTHROPIC_API_KEY|ANTH_API_KEY)=/i, "")
+    .trim();
+}
+
+function getAnthropicApiKey(): { key: string; source: string } {
+  const candidates = [
+    ["ANTH_API_KEY", process.env.ANTH_API_KEY],
+    ["ANTHROPIC_API_KEY", process.env.ANTHROPIC_API_KEY],
+    ["YDI_ANTHROPIC_KEY", process.env.YDI_ANTHROPIC_KEY],
+  ] as const;
+
+  for (const [source, value] of candidates) {
+    const key = cleanApiKey(value ?? "");
+    if (key) return { key, source };
+  }
+  return { key: "", source: "missing" };
 }
 
 function describeAnthropicError(error: unknown): string {
@@ -114,10 +131,16 @@ export async function POST(req: Request) {
   const access = await requireApiAccess(req, { section: "home", limit: { windowMs: 60_000, max: 20 } });
   if (access.response) return access.response;
 
-  const apiKey = getAnthropicApiKey();
+  const { key: apiKey, source: apiKeySource } = getAnthropicApiKey();
   if (!apiKey) {
 
     return new Response(JSON.stringify({ error: "ANTHROPIC_API_KEY not configured" }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  if (!apiKey.startsWith("sk-ant-")) {
+    return new Response(JSON.stringify({ error: `Anthropic key format invalid from ${apiKeySource}` }), {
       status: 500,
       headers: { "Content-Type": "application/json" },
     });
@@ -188,7 +211,7 @@ export async function POST(req: Request) {
         controller.enqueue(encoder.encode("data: [DONE]\n\n"));
       } catch (error) {
         const detail = describeAnthropicError(error);
-        console.error("[ODIN_AI] Anthropic stream failed", { detail });
+        console.error("[ODIN_AI] Anthropic stream failed", { detail, source: apiKeySource });
 
         if (getOdinModel() !== FALLBACK_ODIN_MODEL && /not_found|404|invalid_request/i.test(detail)) {
           try {
@@ -197,16 +220,16 @@ export async function POST(req: Request) {
             return;
           } catch (fallbackError) {
             const fallbackDetail = describeAnthropicError(fallbackError);
-            console.error("[ODIN_AI] Anthropic fallback failed", { detail: fallbackDetail });
+            console.error("[ODIN_AI] Anthropic fallback failed", { detail: fallbackDetail, source: apiKeySource });
             controller.enqueue(
-              encoder.encode(`data: ${JSON.stringify({ error: `AI upstream failed: ${fallbackDetail}` })}\n\n`)
+              encoder.encode(`data: ${JSON.stringify({ error: `AI upstream failed using ${apiKeySource}: ${fallbackDetail}` })}\n\n`)
             );
             return;
           }
         }
 
         controller.enqueue(
-          encoder.encode(`data: ${JSON.stringify({ error: `AI upstream failed: ${detail}` })}\n\n`)
+          encoder.encode(`data: ${JSON.stringify({ error: `AI upstream failed using ${apiKeySource}: ${detail}` })}\n\n`)
         );
       } finally {
         controller.close();
