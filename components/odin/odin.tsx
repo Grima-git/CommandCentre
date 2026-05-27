@@ -1147,7 +1147,7 @@ function splitSpeechIntoChunks(text: string): string[] {
   const chunks: string[] = [];
   let current = "";
   for (const sentence of sentences) {
-    if (`${current} ${sentence}`.trim().length > 180 && current) {
+    if (`${current} ${sentence}`.trim().length > 260 && current) {
       chunks.push(current);
       current = sentence;
     } else {
@@ -1160,11 +1160,11 @@ function splitSpeechIntoChunks(text: string): string[] {
 
 function humanPauseMs(text: string): number {
   const trimmed = text.trim();
-  if (/[!?]$/.test(trimmed)) return 360;
-  if (/\.$/.test(trimmed)) return trimmed.length < 55 ? 300 : 420;
-  if (/[,;:]$/.test(trimmed)) return 190;
-  if (trimmed.length > 140) return 260;
-  return 145;
+  if (/[!?]$/.test(trimmed)) return 180;
+  if (/\.$/.test(trimmed)) return trimmed.length < 55 ? 140 : 210;
+  if (/[,;:]$/.test(trimmed)) return 90;
+  if (trimmed.length > 140) return 130;
+  return 70;
 }
 
 function completeSentencePrefix(text: string): string {
