@@ -95,27 +95,26 @@ function getOdinModel(): string {
 }
 
 function cleanApiKey(value: string): string {
-  return value
+  const cleaned = value
     .trim()
     .replace(/^["']|["']$/g, "")
     .replace(/^(?:YDI_ANTHROPIC_KEY|ANTHROPIC_API_KEY|ANTH_API_KEY)=/i, "")
     .replace(/^Bearer\s+/i, "")
     .replace(/\s+/g, "")
     .trim();
+  return cleaned.match(/sk-ant-[A-Za-z0-9._-]+/)?.[0] ?? cleaned;
 }
 
-function getAnthropicApiKey(): { key: string; source: string } {
+function getAnthropicApiKeys(): Array<{ key: string; source: string }> {
   const candidates = [
     ["ANTH_API_KEY", process.env.ANTH_API_KEY],
     ["ANTHROPIC_API_KEY", process.env.ANTHROPIC_API_KEY],
     ["YDI_ANTHROPIC_KEY", process.env.YDI_ANTHROPIC_KEY],
   ] as const;
 
-  for (const [source, value] of candidates) {
-    const key = cleanApiKey(value ?? "");
-    if (key) return { key, source };
-  }
-  return { key: "", source: "missing" };
+  return candidates
+    .map(([source, value]) => ({ key: cleanApiKey(value ?? ""), source }))
+    .filter((candidate) => candidate.key.startsWith("sk-ant-"));
 }
 
 function describeAnthropicError(error: unknown): string {
@@ -129,20 +128,22 @@ function describeAnthropicError(error: unknown): string {
   return `${type}${status}`;
 }
 
+function isAuthError(detail: string): boolean {
+  return /authentication|unauthorized|401/i.test(detail);
+}
+
+function isModelError(detail: string): boolean {
+  return /not_found|404|invalid_request/i.test(detail);
+}
+
 export async function POST(req: Request) {
   const access = await requireApiAccess(req, { section: "home", limit: { windowMs: 60_000, max: 20 } });
   if (access.response) return access.response;
 
-  const { key: apiKey, source: apiKeySource } = getAnthropicApiKey();
-  if (!apiKey) {
+  const apiKeys = getAnthropicApiKeys();
+  if (apiKeys.length === 0) {
 
     return new Response(JSON.stringify({ error: "ANTHROPIC_API_KEY not configured" }), {
-      status: 500,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
-  if (!apiKey.startsWith("sk-ant-")) {
-    return new Response(JSON.stringify({ error: `Anthropic key format invalid from ${apiKeySource}` }), {
       status: 500,
       headers: { "Content-Type": "application/json" },
     });
@@ -183,12 +184,11 @@ export async function POST(req: Request) {
     systemPrompt += `\n\nOD1N_STATE:\n- energy: normal\n- focus: ${stateMap[body.odinState] ?? "steady"}\n- mood: neutral\n- familiarity_with_user: trusted`;
   }
 
-  const client = new Anthropic({ apiKey });
-
   const encoder = new TextEncoder();
   const readable = new ReadableStream({
     async start(controller) {
-      const streamModel = async (model: string) => {
+      const streamModel = async (key: string, model: string) => {
+        const client = new Anthropic({ apiKey: key });
         const stream = client.messages.stream({
           model,
           max_tokens: body.mode === "lean" ? 500 : 900,
@@ -208,32 +208,48 @@ export async function POST(req: Request) {
         }
       };
 
-      try {
-        await streamModel(getOdinModel());
-        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-      } catch (error) {
-        const detail = describeAnthropicError(error);
-        console.error("[ODIN_AI] Anthropic stream failed", { detail, source: apiKeySource });
+      let finalError = "unknown_error";
+      let finalSource = "missing";
+      let completed = false;
 
-        if (getOdinModel() !== FALLBACK_ODIN_MODEL && /not_found|404|invalid_request/i.test(detail)) {
+      try {
+        for (const candidate of apiKeys) {
+          finalSource = candidate.source;
           try {
-            await streamModel(FALLBACK_ODIN_MODEL);
+            await streamModel(candidate.key, getOdinModel());
+            completed = true;
             controller.enqueue(encoder.encode("data: [DONE]\n\n"));
             return;
-          } catch (fallbackError) {
-            const fallbackDetail = describeAnthropicError(fallbackError);
-            console.error("[ODIN_AI] Anthropic fallback failed", { detail: fallbackDetail, source: apiKeySource });
-            controller.enqueue(
-              encoder.encode(`data: ${JSON.stringify({ error: `AI upstream failed using ${apiKeySource}: ${fallbackDetail}` })}\n\n`)
-            );
-            return;
+          } catch (error) {
+            const detail = describeAnthropicError(error);
+            finalError = detail;
+            console.error("[ODIN_AI] Anthropic stream failed", { detail, source: candidate.source });
+
+            if (isAuthError(detail)) continue;
+
+            if (getOdinModel() !== FALLBACK_ODIN_MODEL && isModelError(detail)) {
+              try {
+                await streamModel(candidate.key, FALLBACK_ODIN_MODEL);
+                completed = true;
+                controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+                return;
+              } catch (fallbackError) {
+                const fallbackDetail = describeAnthropicError(fallbackError);
+                finalError = fallbackDetail;
+                console.error("[ODIN_AI] Anthropic fallback failed", { detail: fallbackDetail, source: candidate.source });
+                if (isAuthError(fallbackDetail)) continue;
+              }
+            }
+
+            break;
           }
         }
-
-        controller.enqueue(
-          encoder.encode(`data: ${JSON.stringify({ error: `AI upstream failed using ${apiKeySource}: ${detail}` })}\n\n`)
-        );
       } finally {
+        if (!completed) {
+          controller.enqueue(
+            encoder.encode(`data: ${JSON.stringify({ error: `AI upstream failed using ${finalSource}: ${finalError}` })}\n\n`)
+          );
+        }
         controller.close();
       }
     },
