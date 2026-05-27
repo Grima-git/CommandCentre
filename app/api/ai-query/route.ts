@@ -94,6 +94,11 @@ function getOdinModel(): string {
   return process.env.ODIN_ANTHROPIC_MODEL?.trim() || DEFAULT_ODIN_MODEL;
 }
 
+function getAnthropicApiKey(): string {
+  const raw = process.env.YDI_ANTHROPIC_KEY || process.env.ANTHROPIC_API_KEY || "";
+  return raw.trim().replace(/^["']|["']$/g, "");
+}
+
 function describeAnthropicError(error: unknown): string {
   const err = error as {
     status?: number;
@@ -109,7 +114,7 @@ export async function POST(req: Request) {
   const access = await requireApiAccess(req, { section: "home", limit: { windowMs: 60_000, max: 20 } });
   if (access.response) return access.response;
 
-  const apiKey = process.env.YDI_ANTHROPIC_KEY;
+  const apiKey = getAnthropicApiKey();
   if (!apiKey) {
 
     return new Response(JSON.stringify({ error: "ANTHROPIC_API_KEY not configured" }), {
@@ -153,7 +158,7 @@ export async function POST(req: Request) {
     systemPrompt += `\n\nOD1N_STATE:\n- energy: normal\n- focus: ${stateMap[body.odinState] ?? "steady"}\n- mood: neutral\n- familiarity_with_user: trusted`;
   }
 
-  const client = new Anthropic({ apiKey: apiKey.trim() });
+  const client = new Anthropic({ apiKey });
 
   const encoder = new TextEncoder();
   const readable = new ReadableStream({
