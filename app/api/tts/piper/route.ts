@@ -10,6 +10,13 @@ type PiperBody = {
 const DEFAULT_PIPER_URL = "http://127.0.0.1:5000";
 const DEFAULT_PIPER_VOICE = "en_GB-northern_english_male-medium";
 
+function jsonUnavailable(error: string, status = 503) {
+  return Response.json(
+    { ok: false, error, fallback: "browser" },
+    { status, headers: { "Cache-Control": "no-store" } },
+  );
+}
+
 function getPiperUrl(): string {
   const raw = process.env.PIPER_TTS_URL;
   if (!raw) {
@@ -19,6 +26,9 @@ function getPiperUrl(): string {
   }
   const url = new URL(raw);
   if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("Invalid PIPER_TTS_URL protocol");
+  if (process.env.NODE_ENV === "production" && url.protocol !== "https:") {
+    throw new Error("PIPER_TTS_URL must use HTTPS in production");
+  }
   return url.toString().replace(/\/$/, "");
 }
 
@@ -54,7 +64,7 @@ async function synthesizePiper(text: string): Promise<Response> {
   });
 
   if (!res.ok) {
-    return Response.json({ ok: false, error: "Piper did not return audio" }, { status: 502 });
+    return jsonUnavailable("Piper did not return audio", 503);
   }
 
   return new Response(await res.arrayBuffer(), {
@@ -86,7 +96,7 @@ export async function POST(req: Request) {
   try {
     return await synthesizePiper(text);
   } catch {
-    return Response.json({ ok: false, error: "Piper TTS is not available" }, { status: 502 });
+    return jsonUnavailable("Piper TTS is not available");
   }
 }
 
@@ -100,6 +110,6 @@ export async function GET(req: Request) {
   try {
     return await synthesizePiper(text);
   } catch {
-    return Response.json({ ok: false, error: "Piper TTS is not available" }, { status: 502 });
+    return jsonUnavailable("Piper TTS is not available");
   }
 }

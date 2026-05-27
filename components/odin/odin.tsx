@@ -368,6 +368,7 @@ export function OdinInterface({ userName }: { userName: string }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioUnlockedRef = useRef(false);
   const piperFailedRef = useRef(false);
+  const piperDisabledRef = useRef(false);
 
   useEffect(() => { stateRef.current = odinState; }, [odinState]);
   useNeuralCanvas(canvasRef, stateRef);
@@ -530,7 +531,6 @@ export function OdinInterface({ userName }: { userName: string }) {
     spokenPrefixRef.current = "";
     speechQueueRef.current = [];
     speakingRef.current = false;
-    piperFailedRef.current = false;
     audioRef.current?.pause();
     if (window.speechSynthesis) window.speechSynthesis.cancel();
     const addContact = parseAddContactCommand(text);
@@ -791,7 +791,10 @@ export function OdinInterface({ userName }: { userName: string }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text }),
       });
-      if (!res.ok) throw new Error("Piper unavailable");
+      if (!res.ok) {
+        if (res.status === 503 || res.status === 404) piperDisabledRef.current = true;
+        throw new Error("Piper unavailable");
+      }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const audio = new Audio(url);
@@ -846,6 +849,10 @@ export function OdinInterface({ userName }: { userName: string }) {
     }
 
     speakingRef.current = true;
+    if (piperDisabledRef.current) {
+      speakWithBrowserVoice(next);
+      return;
+    }
     void playPiperSpeech(next).then((played) => {
       if (played) {
         speakingRef.current = false;
