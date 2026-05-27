@@ -99,6 +99,8 @@ function cleanApiKey(value: string): string {
     .trim()
     .replace(/^["']|["']$/g, "")
     .replace(/^(?:YDI_ANTHROPIC_KEY|ANTHROPIC_API_KEY|ANTH_API_KEY)=/i, "")
+    .replace(/^Bearer\s+/i, "")
+    .replace(/\s+/g, "")
     .trim();
 }
 
