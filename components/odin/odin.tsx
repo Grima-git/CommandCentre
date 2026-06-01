@@ -367,6 +367,7 @@ export function OdinInterface({ userName }: { userName: string }) {
   const speakingRef = useRef(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const audioUnlockedRef = useRef(false);
+  const openAiAudioCacheRef = useRef<Map<string, Promise<string | null>>>(new Map());
   const openAiVoiceFailedRef = useRef(false);
   const openAiVoiceDisabledRef = useRef(false);
   const piperFailedRef = useRef(false);
@@ -533,6 +534,7 @@ export function OdinInterface({ userName }: { userName: string }) {
     spokenPrefixRef.current = "";
     speechQueueRef.current = [];
     speakingRef.current = false;
+    openAiAudioCacheRef.current.clear();
     audioRef.current?.pause();
     if (window.speechSynthesis) window.speechSynthesis.cancel();
     const addContact = parseAddContactCommand(text);
@@ -816,10 +818,12 @@ export function OdinInterface({ userName }: { userName: string }) {
     }
   }
 
-  async function playOpenAiSpeech(text: string): Promise<boolean> {
-    if (openAiVoiceFailedRef.current || openAiVoiceDisabledRef.current) return false;
-    try {
-      setVoiceEngine("OpenAI voice");
+  function prepareOpenAiSpeech(text: string): Promise<string | null> {
+    if (openAiVoiceFailedRef.current || openAiVoiceDisabledRef.current) return Promise.resolve(null);
+    const cached = openAiAudioCacheRef.current.get(text);
+    if (cached) return cached;
+
+    const audioPromise = (async () => {
       const res = await fetch("/api/tts/openai", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -832,7 +836,22 @@ export function OdinInterface({ userName }: { userName: string }) {
         throw new Error("OpenAI voice unavailable");
       }
       const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
+      return URL.createObjectURL(blob);
+    })().catch(() => {
+      openAiVoiceFailedRef.current = true;
+      return null;
+    });
+
+    openAiAudioCacheRef.current.set(text, audioPromise);
+    return audioPromise;
+  }
+
+  async function playOpenAiSpeech(text: string): Promise<boolean> {
+    if (openAiVoiceFailedRef.current || openAiVoiceDisabledRef.current) return false;
+    try {
+      setVoiceEngine("OpenAI voice");
+      const url = await prepareOpenAiSpeech(text);
+      if (!url) throw new Error("OpenAI voice unavailable");
       const audio = new Audio(url);
       audioRef.current = audio;
       setOdinState("speaking");
@@ -842,6 +861,7 @@ export function OdinInterface({ userName }: { userName: string }) {
         void audio.play();
       });
       URL.revokeObjectURL(url);
+      openAiAudioCacheRef.current.delete(text);
       return true;
     } catch {
       openAiVoiceFailedRef.current = true;
@@ -885,6 +905,10 @@ export function OdinInterface({ userName }: { userName: string }) {
     }
 
     speakingRef.current = true;
+    const upcoming = speechQueueRef.current[0];
+    if (upcoming && !openAiVoiceFailedRef.current && !openAiVoiceDisabledRef.current) {
+      void prepareOpenAiSpeech(upcoming);
+    }
     void playOpenAiSpeech(next).then((played) => {
       if (played) {
         speakingRef.current = false;
@@ -1147,7 +1171,7 @@ function splitSpeechIntoChunks(text: string): string[] {
   const chunks: string[] = [];
   let current = "";
   for (const sentence of sentences) {
-    if (`${current} ${sentence}`.trim().length > 260 && current) {
+    if (`${current} ${sentence}`.trim().length > 220 && current) {
       chunks.push(current);
       current = sentence;
     } else {
@@ -1160,11 +1184,11 @@ function splitSpeechIntoChunks(text: string): string[] {
 
 function humanPauseMs(text: string): number {
   const trimmed = text.trim();
-  if (/[!?]$/.test(trimmed)) return 180;
-  if (/\.$/.test(trimmed)) return trimmed.length < 55 ? 140 : 210;
-  if (/[,;:]$/.test(trimmed)) return 90;
-  if (trimmed.length > 140) return 130;
-  return 70;
+  if (/[!?]$/.test(trimmed)) return 70;
+  if (/\.$/.test(trimmed)) return trimmed.length < 55 ? 35 : 60;
+  if (/[,;:]$/.test(trimmed)) return 25;
+  if (trimmed.length > 140) return 45;
+  return 20;
 }
 
 function completeSentencePrefix(text: string): string {

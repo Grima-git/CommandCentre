@@ -9,7 +9,7 @@ type OpenAiTtsBody = {
 
 const DEFAULT_OPENAI_TTS_MODEL = "gpt-4o-mini-tts";
 const DEFAULT_OPENAI_TTS_VOICE = "onyx";
-const DEFAULT_OPENAI_TTS_SPEED = 1.08;
+const DEFAULT_OPENAI_TTS_SPEED = 1.15;
 
 function cleanOpenAiKey(value: string): string {
   const cleaned = value
@@ -64,7 +64,7 @@ async function synthesizeOpenAi(text: string): Promise<Response> {
       input: humanizeForSpeech(text),
       instructions:
         process.env.OPENAI_TTS_INSTRUCTIONS ||
-        "Speak in a warm, calm, lower-register British assistant voice. Keep it smooth, natural, and conversational with brief pauses.",
+        "Speak in a warm, calm, lower-register British assistant voice. Keep it smooth, natural, conversational, and responsive. Use only very brief pauses.",
       response_format: "mp3",
       speed: Number(process.env.OPENAI_TTS_SPEED || DEFAULT_OPENAI_TTS_SPEED),
     }),
