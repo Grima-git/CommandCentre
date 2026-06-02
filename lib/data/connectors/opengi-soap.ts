@@ -127,6 +127,27 @@ export type RenewalDueRow = {
   product: string;
 };
 
+export type NewBusinessRow = {
+  date: string;
+  processedDate: string;
+  policyRef: string;
+  clientName: string;
+  totalPremium: number;
+  financeFees: number;
+  deposit: number;
+  fees: number;
+  commission: number;
+  earn: number;
+  advisor: string;
+  legalSold: string;
+  breakdownSold: string;
+  insurer: string;
+  financed: boolean;
+  inceptionDate: string;
+  daysInAdv: number;
+  pctDeposit: number;
+};
+
 function parseRenewalRows(soapXml: string): RenewalRow[] {
   const inner = extractInnerXml(soapXml);
   if (!inner) return [];
@@ -176,7 +197,56 @@ export async function fetchRenewalsTracker(
   return parseRenewalRows(xml);
 }
 
-export type NewBusinessRow = RenewalRow;
+function parseNewBusinessRows(soapXml: string): NewBusinessRow[] {
+  const inner = extractInnerXml(soapXml);
+  if (!inner) return [];
+
+  const rowMatches = inner.matchAll(/<Row>([\s\S]*?)<\/Row>/g);
+  const rows: NewBusinessRow[] = [];
+
+  for (const [, rowXml] of rowMatches) {
+    const cols: Record<string, string> = {};
+    for (const [, id, val] of rowXml.matchAll(/<Col id="(\d+)" value="([^"]*)"\s*\/>/g)) {
+      cols[id] = val.trim();
+    }
+
+    const processedDate = cols["1"] ?? "";
+    const inceptionDate = cols["13"] ?? "";
+    let daysInAdv = 0;
+    if (processedDate && inceptionDate) {
+      const start = parseDDMMYYYY(processedDate);
+      const end = parseDDMMYYYY(inceptionDate);
+      daysInAdv = Math.max(0, Math.round((end.getTime() - start.getTime()) / 86_400_000));
+    }
+
+    const financeFees = parseFloat(cols["5"]) || 0;
+    const fees = parseFloat(cols["7"]) || 0;
+    const commission = parseFloat(cols["8"]) || 0;
+
+    rows.push({
+      date: processedDate,
+      processedDate,
+      policyRef: cols["2"] ?? "",
+      clientName: cols["3"] ?? "",
+      totalPremium: parseFloat(cols["4"]) || 0,
+      financeFees,
+      deposit: parseFloat(cols["6"]) || 0,
+      fees,
+      commission,
+      earn: financeFees + fees + commission,
+      financed: cols["9"] === "Yes",
+      breakdownSold: cols["10"] === "Yes" ? "Yes" : "",
+      legalSold: cols["11"] === "Yes" ? "Yes" : "",
+      insurer: (cols["12"] ?? "").trim(),
+      inceptionDate,
+      daysInAdv,
+      pctDeposit: parseFloat(cols["15"]) || 0,
+      advisor: (cols["18"] || cols["19"] || "").trim(),
+    });
+  }
+
+  return rows;
+}
 
 export async function fetchNewBusinessTracker(
   start: Date,
@@ -187,7 +257,7 @@ export async function fetchNewBusinessTracker(
     formatDDMMYYYY(end),
   ]);
   if (!xml) return null;
-  return parseRenewalRows(xml);
+  return parseNewBusinessRows(xml);
 }
 
 function formatDueRenewalDate(raw: string): string {
