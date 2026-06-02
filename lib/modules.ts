@@ -5,7 +5,7 @@ import { isDbConfigured, dbQueryOne } from "@/lib/db";
 
 export { TOGGLEABLE_MODULES };
 
-const DEFAULT_ENABLED: SectionId[] = ["renewals", "calls", "hr", "email", "calendar", "teams"];
+const DEFAULT_ENABLED: SectionId[] = ["renewals", "new-business", "calls", "hr", "email", "calendar", "teams"];
 
 // ---------------------------------------------------------------------------
 // PostgreSQL implementation

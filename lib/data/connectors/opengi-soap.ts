@@ -176,6 +176,20 @@ export async function fetchRenewalsTracker(
   return parseRenewalRows(xml);
 }
 
+export type NewBusinessRow = RenewalRow;
+
+export async function fetchNewBusinessTracker(
+  start: Date,
+  end: Date
+): Promise<NewBusinessRow[] | null> {
+  const xml = await callSoap("[usp_Report_NewBusiness_Tracker]", [
+    formatDDMMYYYY(start),
+    formatDDMMYYYY(end),
+  ]);
+  if (!xml) return null;
+  return parseRenewalRows(xml);
+}
+
 function formatDueRenewalDate(raw: string): string {
   const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (!match) return raw;

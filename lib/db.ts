@@ -42,14 +42,20 @@ async function ensureSchema(): Promise<void> {
 
     CREATE TABLE IF NOT EXISTS cc_modules (
       id              INTEGER     PRIMARY KEY DEFAULT 1,
-      enabled_modules JSONB       NOT NULL DEFAULT '["renewals","calls","hr","email","calendar","teams"]'::jsonb,
+      enabled_modules JSONB       NOT NULL DEFAULT '["renewals","new-business","calls","hr","email","calendar","teams"]'::jsonb,
       updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       CONSTRAINT single_row CHECK (id = 1)
     );
 
     INSERT INTO cc_modules (id, enabled_modules)
-    VALUES (1, '["renewals","calls","hr","email","calendar","teams"]'::jsonb)
+    VALUES (1, '["renewals","new-business","calls","hr","email","calendar","teams"]'::jsonb)
     ON CONFLICT (id) DO NOTHING;
+
+    UPDATE cc_modules
+    SET enabled_modules = enabled_modules || '["new-business"]'::jsonb,
+        updated_at = NOW()
+    WHERE id = 1
+      AND NOT (enabled_modules ? 'new-business');
   `);
 }
 
