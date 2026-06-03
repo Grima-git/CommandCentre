@@ -1,7 +1,6 @@
 import {
   fetchNewBusinessTracker,
   formatDDMMYYYY,
-  parseDDMMYYYY,
   shortLabel,
 } from "@/lib/data/connectors/opengi-soap";
 import type { NewBusinessRow } from "@/lib/data/connectors/opengi-soap";
@@ -88,13 +87,12 @@ async function fetchTrackerForPeriod(
   const results = await Promise.all(chunks.map(([s, e]) => fetchNewBusinessTracker(s, e)));
   if (results.some((r) => r === null)) return null;
 
-  // Deduplicate by policyRef + inceptionDate (overlapping rows can appear in
-  // the lookback window AND the main month window)
+  // Deduplicate by policyRef + processed date if monthly chunks ever overlap.
   const seen = new Set<string>();
   const merged: NewBusinessRow[] = [];
   for (const chunk of results) {
     for (const row of chunk!) {
-      const key = `${row.policyRef.trim().toLowerCase()}|${row.inceptionDate}`;
+      const key = `${row.policyRef.trim().toLowerCase()}|${row.date}`;
       if (!seen.has(key)) {
         seen.add(key);
         merged.push(row);
@@ -109,9 +107,9 @@ async function fetchTrackerForPeriod(
 // ---------------------------------------------------------------------------
 
 type DateWindow = {
-  queryStart: Date; // what we ask the SOAP proc for (may look back for advances)
+  queryStart: Date;
   queryEnd: Date;
-  displayStart: Date; // what we show in the UI date label
+  displayStart: Date;
   displayEnd: Date;
 };
 
@@ -134,19 +132,15 @@ function getDateWindow(period: string, now: Date): DateWindow {
   }
 
   if (period === "month") {
-    const displayStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    // Look back 30 days so advance processed business (processed before month start but
-    // with an inception date this month) are included — included in this period.
-    const queryStart = new Date(displayStart);
-    queryStart.setDate(queryStart.getDate() - 30);
-    return { queryStart, queryEnd: end, displayStart, displayEnd: end };
+    const start = new Date(now.getFullYear(), now.getMonth(), 1);
+    start.setHours(0, 0, 0, 0);
+    return { queryStart: start, queryEnd: end, displayStart: start, displayEnd: end };
   }
 
   if (period === "ytd") {
-    const displayStart = new Date(now.getFullYear(), 0, 1);
-    const queryStart = new Date(displayStart);
-    queryStart.setDate(queryStart.getDate() - 30);
-    return { queryStart, queryEnd: end, displayStart, displayEnd: end };
+    const start = new Date(now.getFullYear(), 0, 1);
+    start.setHours(0, 0, 0, 0);
+    return { queryStart: start, queryEnd: end, displayStart: start, displayEnd: end };
   }
 
   // fallback: today
@@ -160,26 +154,6 @@ function formatDateRange(start: Date, end: Date): string {
     d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
   if (fmt(start) === fmt(end)) return fmt(start);
   return `${fmt(start)} – ${fmt(end)}`;
-}
-
-// For month / ytd we filter the raw rows down to those whose inceptionDate
-// falls within the display window — this is what the pipeline uses too.
-function filterByInceptionDate(
-  rows: NewBusinessRow[],
-  start: Date,
-  end: Date,
-): NewBusinessRow[] {
-  const s = new Date(start); s.setHours(0, 0, 0, 0);
-  const e = new Date(end);   e.setHours(23, 59, 59, 999);
-  return rows.filter((r) => {
-    if (!r.inceptionDate) return false;
-    try {
-      const d = parseDDMMYYYY(r.inceptionDate);
-      return d >= s && d <= e;
-    } catch {
-      return false;
-    }
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -207,13 +181,7 @@ export async function GET(req: Request) {
   if (!rawRows) {
     return Response.json({ ok: false, error: "Could not reach data source" }, { status: 502 });
   }
-
-  // For month/ytd, narrow to policies whose inception date falls in the display
-  // window — this aligns with the pipeline's "344 renewed in May" count.
-  const rows =
-    period === "month" || period === "ytd"
-      ? filterByInceptionDate(rawRows, displayStart, displayEnd)
-      : rawRows;
+  const rows = rawRows;
 
   const n = rows.length;
   const renewedRows = rows.filter((r) => r.totalPremium > 0 || r.earn > 0);
@@ -224,8 +192,8 @@ export async function GET(req: Request) {
   const totalCommission = rows.reduce((s, r) => s + r.commission, 0);
   const totalFinanceFees = rows.reduce((s, r) => s + r.financeFees, 0);
 
-  // Trend: for month/ytd group by inception date; for today/week by processed date
-  const dateField: keyof NewBusinessRow = period === "month" || period === "ytd" ? "inceptionDate" : "date";
+  // New Business periods are based on the sold/processed date returned by the tracker.
+  const dateField: keyof NewBusinessRow = "date";
   const trendMap = new Map<string, { policies: number; gwp: number; earn: number }>();
   for (const r of rows) {
     const rawDate = (r[dateField] as string) || r.date;
