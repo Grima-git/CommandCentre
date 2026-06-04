@@ -155,6 +155,20 @@ function getDateWindow(period: string, now: Date): DateWindow {
   return { queryStart: start, queryEnd: end, displayStart: start, displayEnd: end };
 }
 
+function parseIsoDateParam(value: string | null): Date | null {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const [yyyy, mm, dd] = value.split("-").map(Number);
+  const date = new Date(yyyy, mm - 1, dd);
+  if (
+    date.getFullYear() !== yyyy ||
+    date.getMonth() !== mm - 1 ||
+    date.getDate() !== dd
+  ) {
+    return null;
+  }
+  return date;
+}
+
 function formatDateRange(start: Date, end: Date): string {
   const fmt = (d: Date) =>
     d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
@@ -197,7 +211,23 @@ export async function GET(req: Request) {
   const period = searchParams.get("period") ?? "today";
   const now = new Date();
 
-  const { queryStart, queryEnd, displayStart, displayEnd } = getDateWindow(period, now);
+  let { queryStart, queryEnd, displayStart, displayEnd } = getDateWindow(period, now);
+  if (period === "custom") {
+    const from = parseIsoDateParam(searchParams.get("from"));
+    const to = parseIsoDateParam(searchParams.get("to"));
+    if (!from || !to) {
+      return Response.json({ ok: false, error: "Invalid custom date range" }, { status: 400 });
+    }
+    from.setHours(0, 0, 0, 0);
+    to.setHours(23, 59, 59, 999);
+    if (from > to) {
+      return Response.json({ ok: false, error: "From date must be before To date" }, { status: 400 });
+    }
+    queryStart = from;
+    queryEnd = to;
+    displayStart = from;
+    displayEnd = to;
+  }
 
   const rawRows = await getCached(
     `renewals:summary:tracker:${period}:${formatDDMMYYYY(queryStart)}:${formatDDMMYYYY(queryEnd)}`,

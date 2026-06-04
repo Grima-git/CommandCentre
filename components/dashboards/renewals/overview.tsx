@@ -15,13 +15,21 @@ import {
 import type { SummaryResponse, PolicyRow } from "@/app/api/renewals/summary/route";
 import type { MonthlyResponse, MonthStats } from "@/app/api/renewals/monthly/route";
 
-type Period = "today" | "week" | "month" | "ytd";
+type Period = "today" | "week" | "month" | "ytd" | "custom";
 const PERIODS: { key: Period; label: string }[] = [
   { key: "today", label: "Today" },
   { key: "week", label: "This Week" },
   { key: "month", label: "This Month" },
   { key: "ytd", label: "Year to Date" },
+  { key: "custom", label: "Custom" },
 ];
+
+function toInputDate(date: Date) {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
 
 // ── Animated counter hook ──────────────────────────────────────────────────
 function useCountUp(target: number, duration = 700) {
@@ -46,6 +54,8 @@ function useCountUp(target: number, duration = 700) {
 // ── Main component ─────────────────────────────────────────────────────────
 export function RenewalsOverview({ userName }: { userName: string }) {
   const [period, setPeriod] = useState<Period>("today");
+  const [customFrom, setCustomFrom] = useState(() => toInputDate(new Date()));
+  const [customTo, setCustomTo] = useState(() => toInputDate(new Date()));
   const [data, setData] = useState<SummaryResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -59,7 +69,12 @@ export function RenewalsOverview({ userName }: { userName: string }) {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/renewals/summary?period=${p}`);
+      const params = new URLSearchParams({ period: p });
+      if (p === "custom") {
+        params.set("from", customFrom);
+        params.set("to", customTo);
+      }
+      const res = await fetch(`/api/renewals/summary?${params.toString()}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
       if (!json.ok) throw new Error(json.error ?? "Unknown error");
@@ -71,7 +86,7 @@ export function RenewalsOverview({ userName }: { userName: string }) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [customFrom, customTo]);
 
   useEffect(() => { load(period); }, [period, load]);
 
@@ -84,6 +99,8 @@ export function RenewalsOverview({ userName }: { userName: string }) {
       .finally(() => setMonthlyLoading(false));
   }, []);
 
+  const showPolicyTable = period === "today" || (period === "custom" && customFrom === customTo);
+
   return (
     <div className="flex-1 overflow-y-auto min-h-0">
       {/* ── Sticky header ── */}
@@ -94,21 +111,44 @@ export function RenewalsOverview({ userName }: { userName: string }) {
             {loading ? "Loading…" : data?.dateRange ?? "—"}
           </p>
         </div>
-        <div className="flex items-center gap-1 bg-bg-elev rounded-xl p-1 border border-bg-line">
-          {PERIODS.map((p) => (
-            <button
-              key={p.key}
-              onClick={() => setPeriod(p.key)}
-              className={cn(
-                "px-4 py-1.5 rounded-lg text-sm font-medium transition-all duration-200",
-                period === p.key
-                  ? "bg-brand-purple text-white shadow-glow"
-                  : "text-txt-muted hover:text-txt-secondary hover:bg-bg-card"
-              )}
-            >
-              {p.label}
-            </button>
-          ))}
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 bg-bg-elev rounded-xl p-1 border border-bg-line">
+            {PERIODS.map((p) => (
+              <button
+                key={p.key}
+                onClick={() => setPeriod(p.key)}
+                className={cn(
+                  "px-4 py-1.5 rounded-lg text-sm font-medium transition-all duration-200",
+                  period === p.key
+                    ? "bg-brand-purple text-white shadow-glow"
+                    : "text-txt-muted hover:text-txt-secondary hover:bg-bg-card"
+                )}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-2 bg-bg-elev rounded-xl px-3 py-2 border border-bg-line">
+            <input
+              type="date"
+              value={customFrom}
+              onChange={(e) => {
+                setCustomFrom(e.target.value);
+                setPeriod("custom");
+              }}
+              className="bg-transparent text-xs text-txt-secondary outline-none [color-scheme:dark]"
+            />
+            <span className="text-xs text-txt-muted">to</span>
+            <input
+              type="date"
+              value={customTo}
+              onChange={(e) => {
+                setCustomTo(e.target.value);
+                setPeriod("custom");
+              }}
+              className="bg-transparent text-xs text-txt-secondary outline-none [color-scheme:dark]"
+            />
+          </div>
         </div>
       </div>
 
@@ -223,7 +263,7 @@ export function RenewalsOverview({ userName }: { userName: string }) {
               <InsightBar data={data} period={period} />
 
               {/* Main content */}
-              {period === "today" ? (
+              {showPolicyTable ? (
                 <PolicyTable policies={data.policies} />
               ) : (
                 <ChartsSection data={data} />
