@@ -16,6 +16,7 @@ import type { SummaryResponse, PolicyRow } from "@/app/api/renewals/summary/rout
 import type { MonthlyResponse, MonthStats } from "@/app/api/renewals/monthly/route";
 
 type Period = "today" | "week" | "month" | "ytd" | "custom";
+type LoadProgress = { label: string; current: number; total: number };
 const PERIODS: { key: Period; label: string }[] = [
   { key: "today", label: "Today" },
   { key: "week", label: "This Week" },
@@ -151,6 +152,7 @@ export function RenewalsOverview({ userName }: { userName: string }) {
   const [customTo, setCustomTo] = useState(() => toInputDate(new Date()));
   const [data, setData] = useState<SummaryResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadProgress, setLoadProgress] = useState<LoadProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [visible, setVisible] = useState(false);
   const [monthlyData, setMonthlyData] = useState<MonthlyResponse | null>(null);
@@ -160,18 +162,21 @@ export function RenewalsOverview({ userName }: { userName: string }) {
   const load = useCallback(async (p: Period) => {
     setVisible(false);
     setLoading(true);
+    setLoadProgress(null);
     setError(null);
     try {
       if (p === "ytd") {
         const chunks = ytdChunks();
         const parts: SummaryResponse[] = [];
-        for (const { from, to } of chunks) {
+        for (const [index, { from, to }] of chunks.entries()) {
+          setLoadProgress({ label: `Loading YTD ${index + 1} of ${chunks.length}`, current: index, total: chunks.length });
           const params = new URLSearchParams({ period: "custom", from, to });
           const res = await fetch(`/api/renewals/summary?${params.toString()}`);
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           const json = await res.json();
           if (!json.ok) throw new Error(json.error ?? "Unknown error");
           parts.push(json as SummaryResponse);
+          setLoadProgress({ label: `Loading YTD ${index + 1} of ${chunks.length}`, current: index + 1, total: chunks.length });
         }
         setData(mergeSummaries(parts));
         requestAnimationFrame(() => requestAnimationFrame(() => setVisible(true)));
@@ -193,6 +198,7 @@ export function RenewalsOverview({ userName }: { userName: string }) {
       setError((e as Error).message);
       setData(null);
     } finally {
+      setLoadProgress(null);
       setLoading(false);
     }
   }, [customFrom, customTo]);
@@ -264,7 +270,11 @@ export function RenewalsOverview({ userName }: { userName: string }) {
       {/* ── States ── */}
       {loading && (
         <div className="flex items-center justify-center h-64">
-          <RefreshCw className="w-6 h-6 text-txt-muted animate-spin" />
+          {loadProgress ? (
+            <LoadingProgress progress={loadProgress} />
+          ) : (
+            <RefreshCw className="w-6 h-6 text-txt-muted animate-spin" />
+          )}
         </div>
       )}
       {error && !loading && (
@@ -454,6 +464,29 @@ function RateCard({
 }
 
 // ── Insight highlights bar ─────────────────────────────────────────────────
+function LoadingProgress({ progress }: { progress: LoadProgress }) {
+  const pct = progress.total > 0 ? Math.round((progress.current / progress.total) * 100) : 0;
+  return (
+    <div className="w-full max-w-md rounded-2xl bg-bg-card border border-bg-line p-5 shadow-soft">
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <div className="text-sm font-semibold text-txt-primary">{progress.label}</div>
+          <div className="text-xs text-txt-muted mt-1">Fetching each month separately</div>
+        </div>
+        <div className="text-sm font-bold tabular-nums text-brand-purple">{pct}%</div>
+      </div>
+      <div className="h-2 rounded-full bg-bg-elev overflow-hidden">
+        <div
+          className="h-full rounded-full bg-brand-purple transition-all duration-300"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <div className="mt-2 text-[11px] text-txt-muted tabular-nums">
+        {progress.current} / {progress.total} complete
+      </div>
+    </div>
+  );
+}
 function InsightBar({ data, period }: { data: SummaryResponse; period: Period }) {
   const topAdvisor = data.advisors[0];
   const urgentCount = period === "today"
@@ -902,3 +935,4 @@ function ChartsSection({ data }: { data: SummaryResponse }) {
     </div>
   );
 }
+
