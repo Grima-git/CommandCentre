@@ -47,6 +47,14 @@ async function ensureSchema(): Promise<void> {
       CONSTRAINT single_row CHECK (id = 1)
     );
 
+    CREATE TABLE IF NOT EXISTS cc_ai_insights (
+      id           TEXT        PRIMARY KEY,
+      subject      TEXT        NOT NULL,
+      generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      expires_at   TIMESTAMPTZ NOT NULL,
+      payload      JSONB       NOT NULL
+    );
+
     INSERT INTO cc_modules (id, enabled_modules)
     VALUES (1, '["renewals","new-business","calls","hr","email","calendar","teams"]'::jsonb)
     ON CONFLICT (id) DO NOTHING;

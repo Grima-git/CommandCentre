@@ -26,6 +26,9 @@
 [functions."api/new-business/summary"]
   timeout = 26
 
+[functions."api/new-business/insights"]
+  timeout = 26
+
 [functions."api/calls/summary"]
   timeout = 20
 

@@ -10,12 +10,30 @@ import {
   AlertCircle, RefreshCw, PoundSterling, TrendingUp, Calculator,
   CreditCard, Scale, Wrench, FileText, Crown, Zap, Clock,
   ChevronUp, ChevronDown, ChevronsUpDown, ArrowUpRight, ArrowDownRight,
-  Banknote, BadgePercent, Landmark,
+  Banknote, BadgePercent, Landmark, Sparkles,
 } from "lucide-react";
-import type { SummaryResponse, PolicyRow } from "@/app/api/new-business/summary/route";
+import type {
+  AggregateRow,
+  AdvisorAggregateRow,
+  SummaryResponse,
+  PolicyRow,
+} from "@/app/api/new-business/summary/route";
 
 type Period = "today" | "week" | "month" | "ytd" | "custom";
 type LoadProgress = { label: string; current: number; total: number };
+type AiInsights = {
+  headline: string;
+  bullets: { title: string; body: string }[];
+  opportunities: string[];
+  watchouts: string[];
+};
+type AiInsightResponse = {
+  ok: true;
+  cached: boolean;
+  generatedAt: string;
+  expiresAt: string;
+  insights: AiInsights;
+};
 const PERIODS: { key: Period; label: string }[] = [
   { key: "today", label: "Today" },
   { key: "week", label: "This Week" },
@@ -43,6 +61,42 @@ function ytdChunks() {
     cursor.setMonth(cursor.getMonth() + 1);
   }
   return chunks;
+}
+
+function mergeAggregateRows(parts: AggregateRow[][]): AggregateRow[] {
+  const map = new Map<string, { policies: number; gwp: number; earn: number }>();
+  for (const rows of parts) {
+    for (const row of rows ?? []) {
+      const current = map.get(row.label) ?? { policies: 0, gwp: 0, earn: 0 };
+      current.policies += row.policies;
+      current.gwp += row.gwp;
+      current.earn += row.earn;
+      map.set(row.label, current);
+    }
+  }
+  return [...map.entries()]
+    .map(([label, values]) => ({ label, ...values }))
+    .sort((a, b) => b.policies - a.policies || b.gwp - a.gwp);
+}
+
+function mergeAdvisorAggregateRows(parts: AdvisorAggregateRow[][]): AdvisorAggregateRow[] {
+  const map = new Map<string, { policies: number; gwp: number; earn: number }>();
+  for (const rows of parts) {
+    for (const row of rows ?? []) {
+      const key = `${row.advisor}||${row.label}`;
+      const current = map.get(key) ?? { policies: 0, gwp: 0, earn: 0 };
+      current.policies += row.policies;
+      current.gwp += row.gwp;
+      current.earn += row.earn;
+      map.set(key, current);
+    }
+  }
+  return [...map.entries()]
+    .map(([key, values]) => {
+      const [advisor, label] = key.split("||");
+      return { advisor, label, ...values };
+    })
+    .sort((a, b) => b.policies - a.policies || b.gwp - a.gwp);
 }
 
 function mergeSummaries(parts: SummaryResponse[]): SummaryResponse {
@@ -112,6 +166,9 @@ function mergeSummaries(parts: SummaryResponse[]): SummaryResponse {
     advisors: [...advisorMap.entries()]
       .map(([name, values]) => ({ name, ...values }))
       .sort((a, b) => b.policies - a.policies),
+    weekdayBreakdown: mergeAggregateRows(parts.map((part) => part.weekdayBreakdown ?? [])),
+    advisorWeekdays: mergeAdvisorAggregateRows(parts.map((part) => part.advisorWeekdays ?? [])),
+    advisorMonths: mergeAdvisorAggregateRows(parts.map((part) => part.advisorMonths ?? [])),
     insurers: [...insurerMap.entries()]
       .map(([insurer, values]) => ({
         insurer,
@@ -358,6 +415,8 @@ export function NewBusinessOverview({ userName }: { userName: string }) {
             </div>
           ) : (
             <>
+              {period === "ytd" && <ExecutiveInsightsPanel data={data} />}
+
               {/* Insight highlights */}
               <InsightBar data={data} period={period} />
 
@@ -467,6 +526,129 @@ function LoadingProgress({ progress }: { progress: LoadProgress }) {
     </div>
   );
 }
+
+function ExecutiveInsightsPanel({ data }: { data: SummaryResponse }) {
+  const [insight, setInsight] = useState<AiInsightResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadInsights = useCallback(async (force = false) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/new-business/insights", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ summary: data, force }),
+      });
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !json?.ok) {
+        throw new Error(json?.error ?? `HTTP ${res.status}`);
+      }
+      setInsight(json as AiInsightResponse);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  }, [data]);
+
+  useEffect(() => {
+    loadInsights(false);
+  }, [loadInsights]);
+
+  const generated = insight?.generatedAt
+    ? new Date(insight.generatedAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })
+    : null;
+  const expires = insight?.expiresAt
+    ? new Date(insight.expiresAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })
+    : null;
+
+  return (
+    <div className="bg-bg-card border border-bg-line rounded-2xl p-5 animate-fade-up">
+      <div className="flex items-start justify-between gap-4 mb-4">
+        <div>
+          <div className="flex items-center gap-2 text-sm font-semibold">
+            <Sparkles className="w-4 h-4 text-brand-purple" />
+            OD1N Executive Insight
+          </div>
+          <div className="text-xs text-txt-muted mt-1">
+            Year to date readout, refreshed automatically every 48 hours
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => loadInsights(true)}
+          disabled={loading}
+          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-bg-elev border border-bg-line text-xs font-medium text-txt-secondary hover:text-txt-primary hover:border-brand-purple/50 disabled:opacity-60 transition-colors"
+        >
+          <RefreshCw className={cn("w-3.5 h-3.5", loading && "animate-spin")} />
+          Refresh now
+        </button>
+      </div>
+
+      {loading && !insight && (
+        <div className="flex items-center gap-3 text-sm text-txt-muted">
+          <RefreshCw className="w-4 h-4 animate-spin" />
+          Reading the YTD numbers...
+        </div>
+      )}
+
+      {error && !insight && (
+        <div className="flex items-center gap-2 text-sm text-brand-red">
+          <AlertCircle className="w-4 h-4" />
+          {error}
+        </div>
+      )}
+
+      {insight && (
+        <div className="space-y-4">
+          <div className="text-sm text-txt-primary leading-relaxed">{insight.insights.headline}</div>
+          <div className="grid grid-cols-3 gap-3">
+            {insight.insights.bullets.slice(0, 6).map((item) => (
+              <div key={item.title} className="rounded-xl bg-bg-elev/45 border border-bg-line px-4 py-3">
+                <div className="text-xs font-semibold text-txt-primary mb-1">{item.title}</div>
+                <div className="text-xs leading-relaxed text-txt-muted">{item.body}</div>
+              </div>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <InsightList title="Opportunities" color="text-brand-green" items={insight.insights.opportunities} />
+            <InsightList title="Watchouts" color="text-brand-amber" items={insight.insights.watchouts} />
+          </div>
+
+          <div className="flex items-center justify-between text-[11px] text-txt-muted">
+            <span>{insight.cached ? "Cached insight" : "Fresh insight"}{generated ? ` · ${generated}` : ""}</span>
+            {expires && <span>Next automatic refresh after {expires}</span>}
+          </div>
+          {error && (
+            <div className="flex items-center gap-2 text-xs text-brand-red">
+              <AlertCircle className="w-3.5 h-3.5" />
+              Refresh failed: {error}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function InsightList({ title, color, items }: { title: string; color: string; items: string[] }) {
+  return (
+    <div className="rounded-xl bg-bg-elev/30 border border-bg-line px-4 py-3">
+      <div className={cn("text-xs font-semibold mb-2", color)}>{title}</div>
+      <div className="space-y-1.5">
+        {items.length > 0 ? items.map((item) => (
+          <div key={item} className="text-xs leading-relaxed text-txt-muted">{item}</div>
+        )) : (
+          <div className="text-xs text-txt-muted">No clear signal yet.</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function InsightBar({ data, period }: { data: SummaryResponse; period: Period }) {
   const topAdvisor = data.advisors[0];
   const urgentCount = period === "today"

@@ -1,6 +1,7 @@
 import {
   fetchNewBusinessTracker,
   formatDDMMYYYY,
+  parseDDMMYYYY,
   shortLabel,
 } from "@/lib/data/connectors/opengi-soap";
 import type { NewBusinessRow } from "@/lib/data/connectors/opengi-soap";
@@ -11,6 +12,14 @@ export const dynamic = "force-dynamic";
 
 export type TrendPoint = { date: string; policies: number; gwp: number; earn: number };
 export type AdvisorRow = { name: string; policies: number; gwp: number; earn: number };
+export type AggregateRow = { label: string; policies: number; gwp: number; earn: number };
+export type AdvisorAggregateRow = {
+  advisor: string;
+  label: string;
+  policies: number;
+  gwp: number;
+  earn: number;
+};
 export type InsurerRow = {
   insurer: string;
   count: number;
@@ -53,6 +62,9 @@ export type SummaryResponse = {
   breakdownPct: number;
   trend: TrendPoint[];
   advisors: AdvisorRow[];
+  weekdayBreakdown: AggregateRow[];
+  advisorWeekdays: AdvisorAggregateRow[];
+  advisorMonths: AdvisorAggregateRow[];
   insurers: InsurerRow[];
   policies: PolicyRow[];
 };
@@ -170,6 +182,39 @@ function formatDateRange(start: Date, end: Date): string {
   return `${fmt(start)} – ${fmt(end)}`;
 }
 
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+function addAggregate(
+  map: Map<string, { policies: number; gwp: number; earn: number }>,
+  key: string,
+  row: NewBusinessRow,
+) {
+  const current = map.get(key) ?? { policies: 0, gwp: 0, earn: 0 };
+  current.policies++;
+  current.gwp += row.totalPremium;
+  current.earn += row.earn;
+  map.set(key, current);
+}
+
+function aggregateRows(
+  map: Map<string, { policies: number; gwp: number; earn: number }>,
+): AggregateRow[] {
+  return [...map.entries()]
+    .map(([label, values]) => ({ label, ...values }))
+    .sort((a, b) => b.policies - a.policies || b.gwp - a.gwp);
+}
+
+function aggregateAdvisorRows(
+  map: Map<string, { policies: number; gwp: number; earn: number }>,
+): AdvisorAggregateRow[] {
+  return [...map.entries()]
+    .map(([key, values]) => {
+      const [advisor, label] = key.split("||");
+      return { advisor, label, ...values };
+    })
+    .sort((a, b) => b.policies - a.policies || b.gwp - a.gwp);
+}
+
 // ---------------------------------------------------------------------------
 // Route handler
 // ---------------------------------------------------------------------------
@@ -268,6 +313,21 @@ export async function GET(req: Request) {
     .sort((a, b) => b[1].policies - a[1].policies)
     .map(([name, v]) => ({ name, ...v }));
 
+  const weekdayMap = new Map<string, { policies: number; gwp: number; earn: number }>();
+  const advisorWeekdayMap = new Map<string, { policies: number; gwp: number; earn: number }>();
+  const advisorMonthMap = new Map<string, { policies: number; gwp: number; earn: number }>();
+  for (const r of rows) {
+    if (!r.date) continue;
+    const soldAt = parseDDMMYYYY(r.date);
+    const weekday = WEEKDAYS[soldAt.getDay()];
+    const month = soldAt.toLocaleDateString("en-GB", { month: "short", year: "numeric" });
+    addAggregate(weekdayMap, weekday, r);
+    if (r.advisor) {
+      addAggregate(advisorWeekdayMap, `${r.advisor}||${weekday}`, r);
+      addAggregate(advisorMonthMap, `${r.advisor}||${month}`, r);
+    }
+  }
+
   // Insurers
   const insMap = new Map<string, { count: number; renewedCount: number; gwp: number }>();
   for (const r of rows) {
@@ -311,6 +371,9 @@ export async function GET(req: Request) {
     breakdownPct: renewedN ? (renewedRows.filter((r) => r.breakdownSold !== "").length / renewedN) * 100 : 0,
     trend,
     advisors,
+    weekdayBreakdown: aggregateRows(weekdayMap),
+    advisorWeekdays: aggregateAdvisorRows(advisorWeekdayMap),
+    advisorMonths: aggregateAdvisorRows(advisorMonthMap),
     insurers,
     policies: includePolicies
       ? rows.map((r) => ({
