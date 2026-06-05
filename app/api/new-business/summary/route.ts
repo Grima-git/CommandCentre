@@ -289,6 +289,11 @@ export async function GET(req: Request) {
       pct: gwp > 0 ? (v.gwp / gwp) * 100 : 0,
     }));
 
+  const includePolicies =
+    displayStart.getFullYear() === displayEnd.getFullYear() &&
+    displayStart.getMonth() === displayEnd.getMonth() &&
+    displayStart.getDate() === displayEnd.getDate();
+
   const body: SummaryResponse = {
     ok: true,
     period,
@@ -307,22 +312,24 @@ export async function GET(req: Request) {
     trend,
     advisors,
     insurers,
-    policies: rows.map((r) => ({
-      policyRef: r.policyRef,
-      clientName: r.clientName,
-      insurer: r.insurer,
-      totalPremium: r.totalPremium,
-      financeFees: r.financeFees,
-      fees: r.fees,
-      commission: r.commission,
-      earn: r.earn,
-      financed: r.financed,
-      legalSold: r.legalSold,
-      breakdownSold: r.breakdownSold,
-      advisor: r.advisor,
-      inceptionDate: r.inceptionDate,
-      daysInAdv: r.daysInAdv,
-    })),
+    policies: includePolicies
+      ? rows.map((r) => ({
+          policyRef: r.policyRef,
+          clientName: r.clientName,
+          insurer: r.insurer,
+          totalPremium: r.totalPremium,
+          financeFees: r.financeFees,
+          fees: r.fees,
+          commission: r.commission,
+          earn: r.earn,
+          financed: r.financed,
+          legalSold: r.legalSold,
+          breakdownSold: r.breakdownSold,
+          advisor: r.advisor,
+          inceptionDate: r.inceptionDate,
+          daysInAdv: r.daysInAdv,
+        }))
+      : [],
   };
 
   return Response.json(body);

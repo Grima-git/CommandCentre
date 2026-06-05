@@ -23,6 +23,9 @@
 [functions."api/renewals/monthly"]
   timeout = 26
 
+[functions."api/new-business/summary"]
+  timeout = 26
+
 [functions."api/calls/summary"]
   timeout = 20
 
