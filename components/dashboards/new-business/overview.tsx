@@ -37,11 +37,10 @@ function ytdChunks() {
   const cursor = new Date(now.getFullYear(), 0, 1);
   while (cursor <= now) {
     const from = new Date(cursor);
-    const weekEnd = new Date(cursor);
-    weekEnd.setDate(weekEnd.getDate() + 6);
-    const to = weekEnd < now ? weekEnd : now;
+    const monthEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
+    const to = monthEnd < now ? monthEnd : now;
     chunks.push({ from: toInputDate(from), to: toInputDate(to) });
-    cursor.setDate(cursor.getDate() + 7);
+    cursor.setMonth(cursor.getMonth() + 1);
   }
   return chunks;
 }
