@@ -109,6 +109,72 @@ function coerceInsights(value: unknown): InsightPayload | null {
   };
 }
 
+function fallbackInsights(summary: SummaryResponse): InsightPayload {
+  const topAdvisor = summary.advisors[0];
+  const topInsurer = summary.insurers[0];
+  const bestWeekday = summary.weekdayBreakdown?.[0];
+  const marginPct = summary.gwp > 0 ? Math.round((summary.netEarn / summary.gwp) * 100) : 0;
+  const financePct = Math.round(summary.financePenPct);
+  const legalPct = Math.round(summary.legalAddonPct);
+  const breakdownPct = Math.round(summary.breakdownPct);
+
+  const bullets: InsightPayload["bullets"] = [
+    {
+      title: "YTD position",
+      body: `${summary.totalPolicies} policies have produced £${Math.round(summary.gwp).toLocaleString("en-GB")} GWP and £${Math.round(summary.netEarn).toLocaleString("en-GB")} net earn, with an average premium of £${Math.round(summary.avgPremium).toLocaleString("en-GB")}.`,
+    },
+  ];
+
+  if (topAdvisor) {
+    bullets.push({
+      title: "Top advisor",
+      body: `${topAdvisor.name} is leading on ${topAdvisor.policies} policies and £${Math.round(topAdvisor.earn).toLocaleString("en-GB")} net earn.`,
+    });
+  }
+  if (bestWeekday) {
+    bullets.push({
+      title: "Strongest weekday",
+      body: `${bestWeekday.label} is currently the strongest day with ${bestWeekday.policies} policies and £${Math.round(bestWeekday.gwp).toLocaleString("en-GB")} GWP.`,
+    });
+  }
+  if (topInsurer) {
+    bullets.push({
+      title: "Insurer mix",
+      body: `${topInsurer.insurer} is the largest insurer by GWP at £${Math.round(topInsurer.gwp).toLocaleString("en-GB")}, representing ${Math.round(topInsurer.pct)}% of written premium.`,
+    });
+  }
+
+  return {
+    headline: `New Business YTD is at ${summary.totalPolicies} policies, £${Math.round(summary.gwp).toLocaleString("en-GB")} GWP and a ${marginPct}% net earn margin.`,
+    bullets,
+    opportunities: [
+      bestWeekday ? `Use ${bestWeekday.label} patterns as the benchmark for lower-volume days.` : "Compare day-by-day performance once more YTD data is available.",
+      topAdvisor ? `Review ${topAdvisor.name}'s habits and pipeline handling to copy what is working.` : "Use advisor totals to identify repeatable sales behaviour.",
+      `Attachment rates: finance ${financePct}%, legal ${legalPct}%, breakdown ${breakdownPct}%. These are clear coaching levers.`,
+    ],
+    watchouts: [
+      financePct < 35 ? "Finance penetration looks low enough to deserve a closer manager review." : "Keep monitoring finance penetration for drift.",
+      legalPct < 50 ? "Legal add-on penetration may be leaving income on the table." : "Legal add-on performance is strong, but should be monitored by advisor.",
+      breakdownPct < 50 ? "Breakdown attachment may be a missed income opportunity." : "Breakdown performance is strong, but check consistency across advisors.",
+    ],
+  };
+}
+
+function parseInsightText(text: string): InsightPayload | null {
+  try {
+    return coerceInsights(JSON.parse(text));
+  } catch {
+    const start = text.indexOf("{");
+    const end = text.lastIndexOf("}");
+    if (start === -1 || end <= start) return null;
+    try {
+      return coerceInsights(JSON.parse(text.slice(start, end + 1)));
+    } catch {
+      return null;
+    }
+  }
+}
+
 function readOpenAiText(json: unknown): string {
   const response = json as {
     output_text?: string;
@@ -160,7 +226,8 @@ async function generateInsights(summary: SummaryResponse): Promise<InsightPayloa
     "Focus on commercially useful patterns: advisor performance, weekday trends, insurer mix, margin, attachment rates, drops, and opportunities.",
     "Return strict JSON only with this shape:",
     '{"headline":"string","bullets":[{"title":"string","body":"string"}],"opportunities":["string"],"watchouts":["string"]}',
-    "Keep bullets specific and number-led where possible.",
+    "Return at most 4 bullets, 3 opportunities, and 3 watchouts.",
+    "Keep every string under 180 characters.",
   ].join("\n");
 
   const res = await fetch("https://api.openai.com/v1/responses", {
@@ -176,7 +243,7 @@ async function generateInsights(summary: SummaryResponse): Promise<InsightPayloa
         role: "user",
         content: [{ type: "input_text", text: JSON.stringify(input) }],
       }],
-      max_output_tokens: 900,
+      max_output_tokens: 1600,
     }),
   });
 
@@ -187,9 +254,9 @@ async function generateInsights(summary: SummaryResponse): Promise<InsightPayloa
 
   const json = await res.json();
   const text = readOpenAiText(json);
-  const parsed = coerceInsights(JSON.parse(text));
+  const parsed = parseInsightText(text);
   if (!parsed || parsed.bullets.length === 0) {
-    throw new Error("OpenAI returned an invalid insight payload");
+    return fallbackInsights(summary);
   }
   return parsed;
 }
