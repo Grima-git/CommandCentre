@@ -37,10 +37,11 @@ function ytdChunks() {
   const cursor = new Date(now.getFullYear(), 0, 1);
   while (cursor <= now) {
     const from = new Date(cursor);
-    const monthEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
-    const to = monthEnd < now ? monthEnd : now;
+    const weekEnd = new Date(cursor);
+    weekEnd.setDate(weekEnd.getDate() + 6);
+    const to = weekEnd < now ? weekEnd : now;
     chunks.push({ from: toInputDate(from), to: toInputDate(to) });
-    cursor.setMonth(cursor.getMonth() + 1);
+    cursor.setDate(cursor.getDate() + 7);
   }
   return chunks;
 }
@@ -451,7 +452,7 @@ function LoadingProgress({ progress }: { progress: LoadProgress }) {
       <div className="flex items-center justify-between mb-3">
         <div>
           <div className="text-sm font-semibold text-txt-primary">{progress.label}</div>
-          <div className="text-xs text-txt-muted mt-1">Fetching each month separately</div>
+          <div className="text-xs text-txt-muted mt-1">Fetching smaller YTD batches</div>
         </div>
         <div className="text-sm font-bold tabular-nums text-brand-purple">{pct}%</div>
       </div>
@@ -768,5 +769,6 @@ function ChartsSection({ data }: { data: SummaryResponse }) {
     </div>
   );
 }
+
 
 
