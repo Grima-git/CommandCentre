@@ -31,6 +31,99 @@ function toInputDate(date: Date) {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+function ytdChunks() {
+  const now = new Date();
+  const chunks: { from: string; to: string }[] = [];
+  const cursor = new Date(now.getFullYear(), 0, 1);
+  while (cursor <= now) {
+    const from = new Date(cursor);
+    const monthEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
+    const to = monthEnd < now ? monthEnd : now;
+    chunks.push({ from: toInputDate(from), to: toInputDate(to) });
+    cursor.setMonth(cursor.getMonth() + 1);
+  }
+  return chunks;
+}
+
+function mergeSummaries(parts: SummaryResponse[]): SummaryResponse {
+  const totalPolicies = parts.reduce((sum, part) => sum + part.totalPolicies, 0);
+  const renewedPolicies = parts.reduce((sum, part) => sum + part.renewedPolicies, 0);
+  const gwp = parts.reduce((sum, part) => sum + part.gwp, 0);
+  const netEarn = parts.reduce((sum, part) => sum + part.netEarn, 0);
+  const totalFees = parts.reduce((sum, part) => sum + part.totalFees, 0);
+  const totalCommission = parts.reduce((sum, part) => sum + part.totalCommission, 0);
+  const totalFinanceFees = parts.reduce((sum, part) => sum + part.totalFinanceFees, 0);
+  const weightedRate = (field: "financePenPct" | "legalAddonPct" | "breakdownPct") =>
+    renewedPolicies
+      ? parts.reduce((sum, part) => sum + part[field] * part.renewedPolicies, 0) / renewedPolicies
+      : 0;
+
+  const trendMap = new Map<string, { policies: number; gwp: number; earn: number }>();
+  for (const part of parts) {
+    for (const point of part.trend) {
+      const current = trendMap.get(point.date) ?? { policies: 0, gwp: 0, earn: 0 };
+      current.policies += point.policies;
+      current.gwp += point.gwp;
+      current.earn += point.earn;
+      trendMap.set(point.date, current);
+    }
+  }
+
+  const advisorMap = new Map<string, { policies: number; gwp: number; earn: number }>();
+  for (const part of parts) {
+    for (const advisor of part.advisors) {
+      const current = advisorMap.get(advisor.name) ?? { policies: 0, gwp: 0, earn: 0 };
+      current.policies += advisor.policies;
+      current.gwp += advisor.gwp;
+      current.earn += advisor.earn;
+      advisorMap.set(advisor.name, current);
+    }
+  }
+
+  const insurerMap = new Map<string, { count: number; renewedCount: number; gwp: number }>();
+  for (const part of parts) {
+    for (const insurer of part.insurers) {
+      const current = insurerMap.get(insurer.insurer) ?? { count: 0, renewedCount: 0, gwp: 0 };
+      current.count += insurer.count;
+      current.renewedCount += insurer.renewedCount;
+      current.gwp += insurer.gwp;
+      insurerMap.set(insurer.insurer, current);
+    }
+  }
+
+  const first = parts[0];
+  const last = parts[parts.length - 1];
+  return {
+    ...first,
+    period: "ytd",
+    dateRange: `${first.dateRange.split(" – ")[0]} – ${last.dateRange.split(" – ").pop()}`,
+    totalPolicies,
+    renewedPolicies,
+    gwp,
+    netEarn,
+    avgPremium: renewedPolicies ? gwp / renewedPolicies : 0,
+    totalFees,
+    totalCommission,
+    totalFinanceFees,
+    financePenPct: weightedRate("financePenPct"),
+    legalAddonPct: weightedRate("legalAddonPct"),
+    breakdownPct: weightedRate("breakdownPct"),
+    trend: [...trendMap.entries()].map(([date, values]) => ({ date, ...values })),
+    advisors: [...advisorMap.entries()]
+      .map(([name, values]) => ({ name, ...values }))
+      .sort((a, b) => b.policies - a.policies),
+    insurers: [...insurerMap.entries()]
+      .map(([insurer, values]) => ({
+        insurer,
+        ...values,
+        avgGwp: values.renewedCount ? values.gwp / values.renewedCount : 0,
+        pct: gwp ? (values.gwp / gwp) * 100 : 0,
+      }))
+      .sort((a, b) => b.gwp - a.gwp),
+    policies: [],
+  };
+}
+
 // ── Animated counter hook ──────────────────────────────────────────────────
 function useCountUp(target: number, duration = 700) {
   const [val, setVal] = useState(0);
@@ -69,6 +162,22 @@ export function RenewalsOverview({ userName }: { userName: string }) {
     setLoading(true);
     setError(null);
     try {
+      if (p === "ytd") {
+        const chunks = ytdChunks();
+        const parts: SummaryResponse[] = [];
+        for (const { from, to } of chunks) {
+          const params = new URLSearchParams({ period: "custom", from, to });
+          const res = await fetch(`/api/renewals/summary?${params.toString()}`);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const json = await res.json();
+          if (!json.ok) throw new Error(json.error ?? "Unknown error");
+          parts.push(json as SummaryResponse);
+        }
+        setData(mergeSummaries(parts));
+        requestAnimationFrame(() => requestAnimationFrame(() => setVisible(true)));
+        return;
+      }
+
       const params = new URLSearchParams({ period: p });
       if (p === "custom") {
         params.set("from", customFrom);
