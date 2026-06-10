@@ -148,6 +148,20 @@ export type NewBusinessRow = {
   pctDeposit: number;
 };
 
+export type PolicyInfoRow = {
+  clientName: string;
+  postcode: string;
+  policyRef: string;
+  makeDescription: string;
+  model: string;
+  vehicleType: string;
+  insuranceScheme: string;
+  vehicleValue: number;
+  classOfUse: string;
+  licenceDescription: string;
+  privateMileage: number;
+};
+
 function parseRenewalRows(soapXml: string): RenewalRow[] {
   const inner = extractInnerXml(soapXml);
   if (!inner) return [];
@@ -258,6 +272,42 @@ export async function fetchNewBusinessTracker(
   ]);
   if (!xml) return null;
   return parseNewBusinessRows(xml);
+}
+
+function parsePolicyInfoRows(soapXml: string): PolicyInfoRow[] {
+  const inner = extractInnerXml(soapXml);
+  if (!inner) return [];
+
+  const rowMatches = inner.matchAll(/<Row>([\s\S]*?)<\/Row>/g);
+  const rows: PolicyInfoRow[] = [];
+
+  for (const [, rowXml] of rowMatches) {
+    const cols: Record<string, string> = {};
+    for (const [, id, val] of rowXml.matchAll(/<Col id="(\d+)" value="([^"]*)"\s*\/>/g)) {
+      cols[id] = val.trim();
+    }
+    rows.push({
+      clientName: cols["1"] ?? "",
+      postcode: cols["2"] ?? "",
+      policyRef: cols["3"] ?? "",
+      makeDescription: cols["4"] ?? "",
+      model: cols["5"] ?? "",
+      vehicleType: cols["6"] ?? "",
+      insuranceScheme: cols["7"] ?? "",
+      vehicleValue: parseFloat(cols["8"]) || 0,
+      classOfUse: cols["9"] ?? "",
+      licenceDescription: cols["10"] ?? "",
+      privateMileage: parseInt(cols["11"], 10) || 0,
+    });
+  }
+
+  return rows;
+}
+
+export async function fetchPolicyInfo(policyRef: string): Promise<PolicyInfoRow[] | null> {
+  const xml = await callSoap("[usp_GetPolicyInfo]", [policyRef]);
+  if (!xml) return null;
+  return parsePolicyInfoRows(xml);
 }
 
 function formatDueRenewalDate(raw: string): string {

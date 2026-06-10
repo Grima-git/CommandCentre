@@ -24,6 +24,7 @@ type Tab = "users" | "modules";
 const MODULE_LABELS: Record<SectionId, string> = {
   renewals: "Renewals",
   "new-business": "New Business",
+  "policy-search": "Policy Search",
   calls: "Calls",
   hr: "HR",
   home: "Home",
@@ -40,6 +41,7 @@ const MODULE_LABELS: Record<SectionId, string> = {
 const MODULE_DESC: Partial<Record<SectionId, string>> = {
   renewals: "OpenGI renewals KPIs, advisor performance and AI insights",
   "new-business": "OpenGI new business KPIs, advisor performance and insurer breakdowns",
+  "policy-search": "OpenGI policy lookup by policy reference",
   calls: "FusionPBX call-centre analytics",
   hr: "Sage HR headcount and absence data",
   email: "Outlook inbox via Microsoft 365 (requires Microsoft login)",

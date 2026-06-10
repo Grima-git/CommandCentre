@@ -3,6 +3,7 @@ import {
   Bell,
   BriefcaseBusiness,
   Calendar,
+  FileSearch,
   Home,
   Mail,
   Phone,
@@ -20,6 +21,7 @@ export type SectionId =
   | "home"
   | "renewals"
   | "new-business"
+  | "policy-search"
   | "calls"
   | "hr"
   | "ai-query"
@@ -46,6 +48,7 @@ export const SECTIONS: SectionDefinition[] = [
   { id: "home", label: "Home", href: "/dashboard/home", icon: Home, placement: "top" },
   { id: "renewals", label: "Renewals", href: "/dashboard/stats", icon: BarChart3, placement: "top" },
   { id: "new-business", label: "New Business", href: "/dashboard/new-business", icon: BriefcaseBusiness, placement: "top" },
+  { id: "policy-search", label: "Policy Search", href: "/dashboard/policy-search", icon: FileSearch, placement: "top" },
   { id: "calls", label: "Calls", href: "/dashboard/calls", icon: Phone, placement: "top" },
   { id: "hr", label: "HR", href: "/dashboard/hr", icon: Users, placement: "top" },
   { id: "ai-query", label: "AI Query", href: "/dashboard/ai-query", icon: Sparkles, placement: "top" },
@@ -58,10 +61,10 @@ export const SECTIONS: SectionDefinition[] = [
   { id: "account", label: "Account", href: "/dashboard/account", icon: User, placement: "bottom" },
 ];
 
-export const DEFAULT_USER_SECTIONS: SectionId[] = ["home", "renewals", "new-business", "calls", "hr"];
+export const DEFAULT_USER_SECTIONS: SectionId[] = ["home", "renewals", "new-business", "policy-search", "calls", "hr"];
 
 // Sections that a global admin can toggle on/off app-wide.
-export const TOGGLEABLE_MODULES: SectionId[] = ["renewals", "new-business", "calls", "hr", "email", "calendar", "teams"];
+export const TOGGLEABLE_MODULES: SectionId[] = ["renewals", "new-business", "policy-search", "calls", "hr", "email", "calendar", "teams"];
 
 export function allSectionIds(): SectionId[] {
   return SECTIONS.map((section) => section.id);
@@ -84,6 +87,7 @@ export function canAccessPath(pathname: string, sections: SectionId[], role: Use
   if (role === "global_admin") return true;
   if (pathname.startsWith("/dashboard/renewals")) return sections.includes("renewals");
   if (pathname.startsWith("/dashboard/new-business")) return sections.includes("new-business");
+  if (pathname.startsWith("/dashboard/policy-search")) return sections.includes("policy-search");
   const section = SECTIONS.find((item) => pathname === item.href || pathname.startsWith(`${item.href}/`));
   if (!section) return true;
   if (section.adminOnly && role !== "admin") return false;
