@@ -2,7 +2,7 @@
 
 import { FormEvent, useState } from "react";
 import type { ReactNode } from "react";
-import { AlertCircle, Car, FileSearch, Gauge, Loader2, MapPin, Search, ShieldCheck } from "lucide-react";
+import { AlertCircle, BriefcaseBusiness, Car, FileSearch, Gauge, Loader2, MapPin, Search, ShieldCheck } from "lucide-react";
 import { cn, formatCurrency } from "@/lib/utils";
 import type { PolicyInfoRow } from "@/lib/data/connectors/opengi-soap";
 
@@ -153,8 +153,10 @@ function PolicyCard({ policy }: { policy: PolicyInfoRow }) {
         </div>
       </div>
 
-      <div className="p-5 grid grid-cols-4 gap-3">
+      <div className="p-5 grid grid-cols-5 gap-3">
         <InfoTile label="Postcode" value={policy.postcode} icon={<MapPin className="w-3.5 h-3.5" />} />
+        <InfoTile label="Industry" value={policy.occupationIndustry} icon={<BriefcaseBusiness className="w-3.5 h-3.5" />} />
+        <InfoTile label="Occupation" value={policy.occupation} icon={<BriefcaseBusiness className="w-3.5 h-3.5" />} />
         <InfoTile label="Vehicle" value={vehicle} icon={<Car className="w-3.5 h-3.5" />} accent="text-brand-blue" />
         <InfoTile label="Type" value={policy.vehicleType} icon={<Car className="w-3.5 h-3.5" />} />
         <InfoTile label="Scheme" value={policy.insuranceScheme} icon={<ShieldCheck className="w-3.5 h-3.5" />} />

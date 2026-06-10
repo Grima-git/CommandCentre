@@ -150,6 +150,8 @@ export type NewBusinessRow = {
 
 export type PolicyInfoRow = {
   clientName: string;
+  occupationIndustry: string;
+  occupation: string;
   postcode: string;
   policyRef: string;
   makeDescription: string;
@@ -288,16 +290,18 @@ function parsePolicyInfoRows(soapXml: string): PolicyInfoRow[] {
     }
     rows.push({
       clientName: cols["1"] ?? "",
-      postcode: cols["2"] ?? "",
-      policyRef: cols["3"] ?? "",
-      makeDescription: cols["4"] ?? "",
-      model: cols["5"] ?? "",
-      vehicleType: cols["6"] ?? "",
-      insuranceScheme: cols["7"] ?? "",
-      vehicleValue: parseFloat(cols["8"]) || 0,
-      classOfUse: cols["9"] ?? "",
-      licenceDescription: cols["10"] ?? "",
-      privateMileage: parseInt(cols["11"], 10) || 0,
+      occupationIndustry: cols["2"] ?? "",
+      occupation: cols["3"] ?? "",
+      postcode: cols["4"] ?? "",
+      policyRef: cols["5"] ?? "",
+      makeDescription: cols["6"] ?? "",
+      model: cols["7"] ?? "",
+      vehicleType: cols["8"] ?? "",
+      insuranceScheme: cols["9"] ?? "",
+      vehicleValue: parseFloat(cols["10"]) || 0,
+      classOfUse: cols["11"] ?? "",
+      licenceDescription: cols["12"] ?? "",
+      privateMileage: parseInt(cols["13"], 10) || 0,
     });
   }
 
