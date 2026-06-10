@@ -47,13 +47,13 @@ function compactSummary(summary: SummaryResponse) {
       legalAddonPct: Math.round(summary.legalAddonPct),
       breakdownPct: Math.round(summary.breakdownPct),
     },
-    topAdvisors: summary.advisors.slice(0, 15).map((advisor) => ({
+    topAdvisors: (summary.advisors ?? []).slice(0, 15).map((advisor) => ({
       name: safeText(advisor.name, 80),
       policies: advisor.policies,
       gwp: Math.round(advisor.gwp),
       earn: Math.round(advisor.earn),
     })),
-    topInsurers: summary.insurers.slice(0, 12).map((insurer) => ({
+    topInsurers: (summary.insurers ?? []).slice(0, 12).map((insurer) => ({
       insurer: safeText(insurer.insurer, 80),
       count: insurer.count,
       written: insurer.renewedCount,
@@ -81,7 +81,7 @@ function compactSummary(summary: SummaryResponse) {
       gwp: Math.round(row.gwp),
       earn: Math.round(row.earn),
     })),
-    dailyTrend: summary.trend.slice(-90).map((point) => ({
+    dailyTrend: (summary.trend ?? []).slice(-90).map((point) => ({
       date: safeText(point.date, 20),
       policies: point.policies,
       gwp: Math.round(point.gwp),

@@ -181,6 +181,22 @@ function mergeSummaries(parts: SummaryResponse[]): SummaryResponse {
   };
 }
 
+function normalizeAiInsights(value: unknown): AiInsights {
+  const source = (value && typeof value === "object" ? value : {}) as Partial<AiInsights>;
+  return {
+    headline: typeof source.headline === "string" && source.headline.trim()
+      ? source.headline
+      : "OD1N could not produce a full AI readout, but the dashboard numbers are still available below.",
+    bullets: Array.isArray(source.bullets)
+      ? source.bullets
+          .filter((item) => item && typeof item.title === "string" && typeof item.body === "string")
+          .map((item) => ({ title: item.title, body: item.body }))
+      : [],
+    opportunities: Array.isArray(source.opportunities) ? source.opportunities.filter((item): item is string => typeof item === "string") : [],
+    watchouts: Array.isArray(source.watchouts) ? source.watchouts.filter((item): item is string => typeof item === "string") : [],
+  };
+}
+
 // ── Animated counter hook ──────────────────────────────────────────────────
 function useCountUp(target: number, duration = 700) {
   const [val, setVal] = useState(0);
@@ -563,6 +579,7 @@ function ExecutiveInsightsPanel({ data }: { data: SummaryResponse }) {
   const expires = insight?.expiresAt
     ? new Date(insight.expiresAt).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" })
     : null;
+  const safeInsights = normalizeAiInsights(insight?.insights);
 
   return (
     <div className="bg-bg-card border border-bg-line rounded-2xl p-5 animate-fade-up">
@@ -603,19 +620,25 @@ function ExecutiveInsightsPanel({ data }: { data: SummaryResponse }) {
 
       {insight && (
         <div className="space-y-4">
-          <div className="text-sm text-txt-primary leading-relaxed">{insight.insights.headline}</div>
+          <div className="text-sm text-txt-primary leading-relaxed">{safeInsights.headline}</div>
           <div className="grid grid-cols-3 gap-3">
-            {insight.insights.bullets.slice(0, 6).map((item) => (
+            {safeInsights.bullets.slice(0, 6).map((item) => (
               <div key={item.title} className="rounded-xl bg-bg-elev/45 border border-bg-line px-4 py-3">
                 <div className="text-xs font-semibold text-txt-primary mb-1">{item.title}</div>
                 <div className="text-xs leading-relaxed text-txt-muted">{item.body}</div>
               </div>
             ))}
+            {safeInsights.bullets.length === 0 && (
+              <div className="rounded-xl bg-bg-elev/45 border border-bg-line px-4 py-3">
+                <div className="text-xs font-semibold text-txt-primary mb-1">Insight unavailable</div>
+                <div className="text-xs leading-relaxed text-txt-muted">Refresh the panel to regenerate the cached readout.</div>
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-3">
-            <InsightList title="Opportunities" color="text-brand-green" items={insight.insights.opportunities} />
-            <InsightList title="Watchouts" color="text-brand-amber" items={insight.insights.watchouts} />
+            <InsightList title="Opportunities" color="text-brand-green" items={safeInsights.opportunities} />
+            <InsightList title="Watchouts" color="text-brand-amber" items={safeInsights.watchouts} />
           </div>
 
           <div className="flex items-center justify-between text-[11px] text-txt-muted">
